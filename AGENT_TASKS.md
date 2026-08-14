@@ -1,0 +1,194 @@
+# AGENT_TASKS.md — ADHD Job Agent Implementation Task Tracker
+
+## Phase 1: Core Data Model (L1-L2)
+
+### Task 1.1: Project Configuration & Setup (EASY)
+- **Task ID**: T1.1
+- **Task name**: Project configuration and virtual environment setup
+- **Difficulty**: EASY
+- **Objective**: Create pyproject.toml with FastAPI, Pydantic v2, SQLite dependencies and configure the Python project structure
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 10-deployment-and-dev-workflow.md, 06-database-design.md
+- **Source files to read**: (none - new project)
+- **Files to modify**: backend/pyproject.toml, backend/requirements.txt
+- **Dependencies**: none
+- **Implementation requirements**: 
+  - pyproject.toml with project metadata, dependencies (fastapi, uvicorn, pydantic>=2, pydantic-settings, aiosqlite, python-dotenv, httpx, pytest, pytest-asyncio)
+  - requirements.txt generated from pyproject.toml
+  - Virtual environment already exists at backend/venv
+- **Acceptance criteria**: 
+  - `pip install -e .` works in backend/
+  - All dependencies resolve without conflicts
+- **Test procedure**: Run `pip install -e .` and verify imports work
+- **Expected result**: Working Python environment with all dependencies installed
+- **Commit message**: chore: add project configuration and dependencies
+- **Status**: DONE
+
+### Task 1.2: Database Models - Pydantic Schemas (EASY)
+- **Task ID**: T1.2
+- **Task name**: Create Pydantic models for profile, jobs, ai_analyses
+- **Difficulty**: EASY
+- **Objective**: Define Pydantic v2 models matching the database schema from 06-database-design.md
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 06-database-design.md, 02-ai-and-matching-architecture.md (for AI analysis schema)
+- **Source files to read**: (none - new models)
+- **Files to modify**: backend/app/models/__init__.py, backend/app/models/profile.py, backend/app/models/job.py, backend/app/models/analysis.py
+- **Dependencies**: T1.1
+- **Implementation requirements**:
+  - Profile model with all fields from 06-database-design.md (work_experience, technical_skills, networking_experience, education, certifications, languages, desired_roles, location_preferences, salary_min/max, remote_preference, experience_level, excluded_keywords, relevance_threshold, resume_text, resume_file_path)
+  - Job model with all fields from 06-database-design.md (adzuna_id, title, company, location, work_mode, employment_type, salary_min/max/currency, salary_is_predicted, description, requirements, skills, redirect_url, posted_at, discovered_at, raw_evidence, passed_prefilter)
+  - AIAnalysis model with all fields from 06-database-design.md and 02-ai-and-matching-architecture.md (job_id, model_used, score, recommendation, confidence, matching_skills, matching_experience, missing_requirements, unknown_requirements, explanation, evidence, status, created_at)
+  - Use Pydantic v2 with proper typing, Optional fields, JSON fields for complex data
+- **Acceptance criteria**: 
+  - All models import without errors
+  - Models validate correctly with sample data
+- **Test procedure**: Run unit tests validating model creation and serialization
+- **Expected result**: Three Pydantic model files with correct schemas
+- **Commit message**: feat: add Pydantic models for profile, job, and AI analysis
+- **Status**: DONE
+
+### Task 1.3: Database Layer - SQLite Connection & Initialization (EASY)
+- **Task ID**: T1.3
+- **Task name**: SQLite database connection, session management, and schema creation
+- **Difficulty**: EASY
+- **Objective**: Create database connection module with aiosqlite, table creation SQL, and initialization logic
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 06-database-design.md, 10-deployment-and-dev-workflow.md
+- **Source files to read**: backend/app/models/ (from T1.2)
+- **Files to modify**: backend/app/db/__init__.py, backend/app/db/session.py, backend/app/db/schema.sql, backend/app/db/init_db.py
+- **Dependencies**: T1.2
+- **Implementation requirements**:
+  - aiosqlite connection pool/session management
+  - schema.sql with CREATE TABLE statements for profile, jobs, ai_analyses matching 06-database-design.md exactly
+  - init_db.py to initialize database file and run migrations
+  - Profile table: single row (enforce with UNIQUE constraint on id=1)
+  - Jobs table: adzuna_id as primary key, passed_prefilter boolean
+  - AIAnalyses table: job_id foreign key, model_used, score, recommendation, confidence, JSON fields for arrays, status enum, created_at
+  - Indexes on commonly queried columns (job_id, created_at, passed_prefilter)
+- **Acceptance criteria**: 
+  - Database file created at configured path
+  - Tables created with correct schema
+  - Can insert/query Profile, Job, AIAnalysis records
+- **Test procedure**: Run init_db.py, verify tables exist with correct schema using sqlite3 CLI
+- **Expected result**: Working SQLite database with three tables
+- **Commit message**: feat: add SQLite database layer with schema and initialization
+- **Status**: DONE
+
+### Task 1.4: Database Repository/CRUD Operations (EASY)
+- **Task ID**: T1.4
+- **Task name**: Repository layer for Profile, Job, AIAnalysis CRUD operations
+- **Difficulty**: EASY
+- **Objective**: Create repository classes with async CRUD methods for each model
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 06-database-design.md, 07-api-design.md
+- **Source files to read**: backend/app/models/, backend/app/db/
+- **Files to modify**: backend/app/repositories/__init__.py, backend/app/repositories/profile.py, backend/app/repositories/job.py, backend/app/repositories/analysis.py
+- **Dependencies**: T1.3
+- **Implementation requirements**:
+  - ProfileRepository: get_profile(), upsert_profile() (single row, id=1)
+  - JobRepository: create_job(), get_job(), list_jobs(), update_job(), delete_job(), get_jobs_by_prefilter()
+  - AIAnalysisRepository: create_analysis(), get_analysis(), get_analyses_for_job(), get_latest_analysis_for_job()
+  - All methods async using aiosqlite
+  - Proper error handling with structured exceptions
+- **Acceptance criteria**: 
+  - All CRUD operations work correctly
+  - Can round-trip data through repositories
+- **Test procedure**: Unit tests for each repository method with test database
+- **Expected result**: Three repository classes with full CRUD
+- **Commit message**: feat: add repository layer for database operations
+- **Status**: DONE
+
+### Task 1.5: FastAPI App Scaffolding & Health Endpoint (EASY)
+- **Task ID**: T1.5
+- **Task name**: FastAPI application structure with /health endpoint
+- **Difficulty**: EASY
+- **Objective**: Create FastAPI app with basic structure, lifespan management, and health check endpoint
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 07-api-design.md, 10-deployment-and-dev-workflow.md
+- **Source files to read**: backend/app/db/, backend/app/repositories/
+- **Files to modify**: backend/app/main.py, backend/app/core/config.py, backend/app/api/__init__.py, backend/app/api/health.py
+- **Dependencies**: T1.3, T1.4
+- **Implementation requirements**:
+  - FastAPI app with lifespan for DB initialization
+  - Config management with pydantic-settings (database_path, adzuna credentials, ollama settings)
+  - /health endpoint returning {status: "ok", database: "connected", ollama: "unknown"}
+  - Basic middleware for error handling (structured errors per 07-api-design.md)
+  - CORS middleware for frontend
+- **Acceptance criteria**: 
+  - App starts with `uvicorn app.main:app --reload`
+  - GET /health returns 200 with expected JSON
+- **Test procedure**: Start server, curl /health endpoint
+- **Expected result**: Running FastAPI app with health endpoint
+- **Commit message**: feat: add FastAPI app scaffolding with health endpoint
+- **Status**: DONE
+
+### Task 1.6: Profile API Endpoints (EASY)
+- **Task ID**: T1.6
+- **Task name**: GET /profile and PUT /profile endpoints
+- **Difficulty**: EASY
+- **Objective**: Implement profile read/update endpoints per API design
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 07-api-design.md
+- **Source files to read**: backend/app/main.py, backend/app/repositories/profile.py, backend/app/models/profile.py
+- **Files to modify**: backend/app/api/profile.py, backend/app/schemas/profile.py
+- **Dependencies**: T1.5, T1.4
+- **Implementation requirements**:
+  - GET /profile returns profile or 404 if not set
+  - PUT /profile creates or updates the single profile row
+  - Request/response schemas using Pydantic
+  - Structured error responses per 07-api-design.md
+- **Acceptance criteria**: 
+  - GET /profile returns 404 when no profile exists
+  - PUT /profile creates profile, GET returns it
+  - PUT /profile updates existing profile
+- **Test procedure**: Integration tests using test client
+- **Expected result**: Working profile endpoints
+- **Commit message**: feat: add profile GET/PUT API endpoints
+- **Status**: DONE
+
+### Task 1.7: Jobs List & Detail API Endpoints (EASY)
+- **Task ID**: T1.7
+- **Task name**: GET /jobs and GET /jobs/{id} endpoints
+- **Difficulty**: EASY
+- **Objective**: Implement job listing and detail endpoints
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 07-api-design.md
+- **Source files to read**: backend/app/repositories/job.py, backend/app/repositories/analysis.py, backend/app/models/
+- **Files to modify**: backend/app/api/jobs.py, backend/app/schemas/job.py
+- **Dependencies**: T1.5, T1.4
+- **Implementation requirements**:
+  - GET /jobs returns paginated list with score/recommendation from latest analysis, sorted by score desc
+  - GET /jobs/{id} returns full job detail with latest analysis data
+  - Join jobs with latest ai_analyses for score/recommendation
+  - Structured error responses
+- **Acceptance criteria**: 
+  - Endpoints return correct data structure
+  - Proper 404 for non-existent job IDs
+- **Test procedure**: Integration tests with test data
+- **Expected result**: Working jobs list and detail endpoints
+- **Commit message**: feat: add jobs list and detail API endpoints
+- **Status**: DONE
+
+### Task 1.8: Unit Tests for Models & Database (EASY)
+- **Task ID**: T1.8
+- **Task name**: Unit tests for Pydantic models and database operations
+- **Difficulty**: EASY
+- **Objective**: Write unit tests covering model validation, database initialization, and repository CRUD
+- **Parent task**: Phase 1 Core Data Model
+- **Documents to read**: 09-testing-strategy.md
+- **Source files to read**: backend/app/models/, backend/app/db/, backend/app/repositories/
+- **Files to modify**: backend/tests/test_models.py, backend/tests/test_db.py, backend/tests/test_repositories.py, backend/tests/conftest.py
+- **Dependencies**: T1.2, T1.3, T1.4
+- **Implementation requirements**:
+  - Test model validation (valid/invalid data)
+  - Test database initialization creates correct tables
+  - Test repository CRUD operations with test database
+  - Use pytest-asyncio for async tests
+  - Fixtures for test database
+- **Acceptance criteria**: 
+  - All tests pass with `pytest backend/tests/`
+  - Coverage for models, db init, repositories
+- **Test procedure**: Run pytest
+- **Expected result**: Passing test suite
+- **Commit message**: test: add unit tests for models, database, and repositories
+- **Status**: DONE
