@@ -1,52 +1,46 @@
-# Job Sources and Browser Automation
+# Job Sources and Application Assistance
 
-## The core rule: Adzuna searches for jobs. The AI does not.
+## Job search and relevance flow
 
-**Adzuna is the mandatory, sole job source for the MVP.** All job discovery — querying, filtering by keyword/location/salary/category, paging through results — is performed by calling Adzuna's REST API with parameters built deterministically from the user's profile. There is no code path, in the MVP or in any later phase, where the LLM is given a "search the web," "find jobs," or "call this API" capability. Search is 100% Adzuna plus deterministic code. The LLM only ever sees jobs *after* Adzuna has already found them and deterministic filtering has already run.
+The ADHD Job Agent — the system as a whole, orchestration code plus the LLM comparison step — actively drives the search-to-relevance loop. What stays fixed regardless of who's "driving" is where job *facts* come from:
 
-This is a stronger, more specific instance of "don't trust the LLM" (rule 5): it isn't just that the LLM can't be trusted to state facts about a job — it can't be trusted to decide what counts as a candidate job in the first place. That decision belongs to Adzuna's structured, queryable index and to deterministic profile-matching code.
+```
+User search preferences (profile)
+  -> AI Job Agent formulates/uses deterministic search criteria
+  -> Adzuna API (sole job-data source)
+  -> Retrieved jobs (Adzuna's structured fields + snippet, stored as evidence)
+  -> Cheap deterministic pre-filter
+  -> Local Ollama compares each remaining job against the user's CV/profile
+  -> Relevance score + evidence-based explanation
+  -> Configurable relevance threshold cutoff
+  -> Relevant jobs shown to the user
+```
+
+Two things are absolute and don't change based on how this flow is described:
+
+1. **Adzuna is the exclusive source of job facts.** The system never searches the general web for jobs, and the AI never invents a job, URL, company, salary, or requirement. Every job the user sees traces back to a specific Adzuna API response, stored as evidence.
+2. **The LLM component itself has no search or tool-calling capability.** It never calls Adzuna, never browses the web, and never decides which jobs exist. Its role begins strictly *after* Adzuna has already returned jobs and the deterministic pre-filter has already run: comparing each remaining job against the CV/profile it's given and producing a scored, evidence-labeled assessment.
+
+An earlier draft of this document said "Adzuna searches for jobs, the AI does not" — that phrasing implied the AI has no role in the search loop at all, which is wrong. The AI Job Agent (the product) *does* drive the end-to-end workflow, including the comparison/scoring step that decides what counts as relevant. What the AI never does is originate job data or bypass Adzuna. See full detail on the comparison/scoring step in `02-ai-and-matching-architecture.md`.
 
 ## Adzuna, specifically
 
 Adzuna (`developer.adzuna.com`) is a job-search aggregator with a public REST API. Relevant facts that shape this design:
 
 - **Auth**: an `app_id` + `app_key` pair issued on registration, passed as query parameters on every call. Both are server-side secrets (see `08-security-and-prompt-injection.md`) — never shipped to the frontend.
-- **Search endpoint**: country-scoped (e.g. `/v1/api/jobs/{country}/search/{page}`), accepting parameters for keywords, location, salary bounds, category, contract type, and sort order — i.e. every deterministic filter this system needs is expressible as an Adzuna query parameter, not something that needs an LLM to "decide."
-- **Response fields** (per job): `id`, `title`, `company`, `location` (structured `area` array + `display_name`), `description` (a snippet — often truncated, not always the full original posting), `salary_min`, `salary_max`, `salary_is_predicted` (Adzuna sometimes estimates rather than states salary — this flag must be surfaced, never silently dropped), `contract_type`, `category`, `created` (posting date), `redirect_url` (the canonical link to the original posting/application page).
-- **Other endpoints** (`/histogram`, `/history`, `/top_companies`, `/geodata`, `/categories`) exist for market-analytics use cases; none are required for MVP and none are used unless a later phase has a concrete, documented reason to add them.
-- **Rate limits**: Adzuna's developer tier enforces a daily request quota tied to the registered application. The connector treats this quota as configuration (not a hard-coded assumption), respects it, backs off and queues rather than retrying aggressively, and surfaces "Adzuna quota exhausted for today" as an explicit, visible state rather than failing silently or looking like zero jobs exist.
-- **`description` is a snippet, not always the full posting.** The connector stores exactly what Adzuna returns — the snippet, all structured fields, and `redirect_url` — as evidence. It does not scrape `redirect_url` to fetch the full original page in the MVP; that would reintroduce the fragility of general-purpose page scraping (site-specific layouts, anti-bot measures) for a benefit (a longer description) that isn't required to ship a reliable MVP. Matching and AI analysis in MVP work against Adzuna's structured fields plus its description snippet. A future phase may add optional full-page extraction via the existing browser-automation subsystem for sources where the snippet is materially insufficient — see `11-mvp-and-roadmap.md`.
+- **Search endpoint**: country-scoped (e.g. `/v1/api/jobs/{country}/search/{page}`), accepting parameters for keywords, location, salary bounds, category, contract type, and sort order — i.e. every deterministic filter this system needs is expressible as an Adzuna query parameter.
+- **Response fields** (per job): `id`, `title`, `company`, `location` (structured `area` array + `display_name`), `description` (a snippet — often truncated, not always the full original posting), `salary_min`, `salary_max`, `salary_is_predicted` (Adzuna sometimes estimates rather than states salary — this flag must be surfaced, never silently dropped), `contract_type`, `category`, `created` (posting date), `redirect_url` (the canonical link to the original posting/application page — this is the link the user manually applies through; see "Manual application, always" below).
+- **Other endpoints** (`/histogram`, `/history`, `/top_companies`, `/geodata`, `/categories`) exist for market-analytics use cases; none are required for MVP.
+- **Rate limits**: Adzuna's developer tier enforces a daily request quota tied to the registered application. The connector treats this quota as configuration, respects it, backs off and queues rather than retrying aggressively, and surfaces "Adzuna quota exhausted for today" as an explicit, visible state.
+- **`description` is a snippet, not always the full posting.** The connector stores exactly what Adzuna returns as evidence. It does not scrape `redirect_url` to fetch the full original page.
 
 ## Adzuna wins: structured source data is authoritative over any AI claim
 
-Wherever Adzuna provides a structured field — `salary_min`/`salary_max`, `location`, `contract_type`, `company`, `created`, `redirect_url` — that field is authoritative, full stop. If the LLM's analysis states or implies something different (a different salary figure, a different location, a different employment type), the deterministic layer's value wins and the LLM's conflicting claim is discarded before it ever reaches the user, not merely down-weighted. This is checked mechanically in the Evidence & Verification Layer (`02-ai-and-matching-architecture.md`): any AI-produced factual claim that falls into a category Adzuna already answered structurally is validated directly against the Adzuna field, not against the free-text snippet.
-
-Where Adzuna leaves a field genuinely blank or ambiguous (e.g. `salary_is_predicted: true`, or no salary at all), the LLM may still not invent a value — that case is `UNKNOWN` per the evidence schema below, and `salary_is_predicted` itself is shown to the user as a caveat on any salary that is displayed.
+Wherever Adzuna provides a structured field — `salary_min`/`salary_max`, `location`, `contract_type`, `company`, `created`, `redirect_url` — that field is authoritative, full stop. If the LLM's analysis states or implies something different, the deterministic layer's value wins and the LLM's conflicting claim is discarded before it ever reaches the user. This is checked mechanically in the Evidence & Verification Layer (`02-ai-and-matching-architecture.md`).
 
 ## Source abstraction, retained for future extensibility — but Adzuna is the only implemented adapter in MVP
 
 The system still defines a `JobSourceAdapter` interface (`discover()` → candidate refs, `extract()` → `RawJobRecord`) so that a second source could be added later without rewriting normalization, dedup, matching, or AI analysis. But for the MVP, exactly one adapter is implemented and required: `AdzunaSourceAdapter`. There is no mock adapter, no seeded demo pool, and no second source shipped alongside it "just in case" — one real, working connector is the entire MVP job-discovery surface, per ADR-004.
-
-```mermaid
-flowchart LR
-    PROFILE["User profile\n(keywords, location, salary floor,\ncategory, contract type)"] --> QUERYBUILD["Deterministic query builder\n(code, not LLM)"]
-    QUERYBUILD --> ADZUNA["Adzuna Search API"]
-    ADZUNA --> RAW["RawJobRecord\n(Adzuna structured fields + snippet + redirect_url)"]
-    RAW --> NORM["Normalizer -> CanonicalJob"]
-    NORM --> DEDUP["Deduplication"]
-    DEDUP --> DETFILTER["Cheap deterministic pre-filter\n(skills/location/salary/exclusions)"]
-    DETFILTER -->|passes| QUEUE["Bounded, low-concurrency\nanalysis queue"]
-    DETFILTER -->|fails| STORE_ONLY["Stored, visible in 'not a match' view,\nnever sent to the LLM"]
-    QUEUE --> LLM["Local Ollama analysis\n(one job at a time — see 02-ai-and-matching-architecture.md)"]
-```
-
-## Source data vs. normalized data vs. AI analysis — kept separate at all times
-
-| Layer | What it contains | Mutable? |
-|---|---|---|
-| `RawJobRecord` (source data) | Exactly what Adzuna returned for this job: all structured fields, the description snippet, `redirect_url`, and the timestamp of the call | Immutable once stored |
-| `CanonicalJob` (normalized data) | Adzuna's fields mapped into the shared schema; missing fields stay null, never invented; `salary_is_predicted` carried through as a first-class flag | Only re-derived by re-running normalization on new raw data, never hand-edited |
-| `AIAnalysis` (AI output) | The LLM's structured, validated, verified interpretation of a `CanonicalJob`, with every claim checked against Adzuna's structured fields first and the description snippet second | Replaced wholesale on re-analysis; never merged/patched in place |
 
 ## Job discovery pipeline
 
@@ -64,42 +58,61 @@ flowchart TD
     MERGE --> FILTER["Cheap deterministic pre-filter"]
     INSERT --> FILTER
     FILTER -->|fails hard filters| NOMATCH["status=MATCHED, score=low,\nnever queued for AI analysis"]
-    FILTER -->|passes| QUEUEIT["Queued for AI analysis\n(low-concurrency queue)"]
+    FILTER -->|passes| QUEUEIT["Queued for AI relevance analysis\n(low-concurrency queue) -- see 02-ai-and-matching-architecture.md"]
 ```
 
 - **Deduplication identity order**: (1) Adzuna's own `id`, (2) `redirect_url` (normalized), (3) a documented deterministic fallback composite key (normalized title + company + location). Same inputs always produce the same dedup decision — deterministic code, never LLM-judged.
 - **The deterministic pre-filter runs before dedup's output is queued for AI analysis at all** — see `02-ai-and-matching-architecture.md` for exactly what it checks and why it exists (protecting the shared GPU/RAM budget on Wassim's machine, not just cost).
 
-## Browser automation subsystem — application preparation only in MVP scope
+## Manual application, always — this is the default and the floor, not an option
 
-Playwright remains part of the architecture for one purpose in MVP: **preparing** an application (navigating to the `redirect_url`/application page, filling fields from staged data) — never submitting one, and never used for job *discovery* (that's Adzuna's job, not automation's). Full-posting extraction via automation is explicitly a possible post-MVP enhancement (`11-mvp-and-roadmap.md`), not required to ship.
+**The system never applies for jobs on the user's behalf, in MVP or in any future phase.** This is absolute, not a "no automatic submission without approval" gate that some automated path could eventually satisfy — there is no automated submission path at all, ever.
 
 ```mermaid
 flowchart TD
-    START["Application prep requested"] --> LAUNCH["Launch isolated browser context"]
-    LAUNCH --> NAV["Navigate to Adzuna's redirect_url"]
-    NAV --> VERIFYPAGE{"Page matches\nexpected job/company?"}
-    VERIFYPAGE -->|no| ABORT["Abort, log unexpected-page error,\nnotify user"]
-    VERIFYPAGE -->|yes| ACT["Fill form using staged,\nuser-approved data only"]
-    ACT --> READBACK["Independently read back page/DOM state\n(never trust the fill step's own success flag)"]
-    READBACK --> STOP["STOP"]
-    STOP --> SHOW["SHOW user exactly what will be submitted"]
-    SHOW --> WAIT["WAIT for explicit user approval"]
-    WAIT -->|approved| CONTINUE["User performs or explicitly triggers\nthe final submit action"]
-    WAIT -->|declined| CANCEL["Cancel, application stays in\nREADY_FOR_USER"]
+    RELEVANT["Relevant job shown to user"] --> REVIEW["User reviews job + evidence"]
+    REVIEW --> CLICK["User clicks the original Adzuna redirect_url"]
+    CLICK --> EXTERNAL["Browser opens the employer/ATS page\n(outside the app, the user's own browser session)"]
+    EXTERNAL --> APPLYMANUAL["User applies manually themselves:\nfills the form, uploads documents,\nanswers questions, clicks Submit"]
+    APPLYMANUAL --> RETURN["User optionally returns to the app\nand marks the application 'Applied'"]
 ```
 
-**Stop → Show → Wait → Continue is enforced in code**: the automation controller has no code path that calls a submit/confirm control without a persisted "user approved this exact submission" record tied to a specific prepared-application snapshot.
+- The original Adzuna/source URL (`redirect_url`) is preserved and always clearly, prominently accessible from the job detail and application screens — it is the user's route out of the app to actually apply.
+- The system does not fill forms, submit applications, use browser automation to apply, upload documents automatically, answer application questions automatically, or interact with an employer's ATS in any way as part of the default flow.
+- "Applied" is a status the user sets themselves, after they have manually applied outside the app. It is a user attestation, not a system-verified fact — and that's fine and expected, because it's a direct user action, not an AI or automation self-report (see `02-ai-and-matching-architecture.md`, "Never trust the AI's report," which is specifically about not trusting *machine* self-reports; a user telling the app what they did is authoritative by definition).
+- A future phase may add email-monitoring detection of application confirmations (`04-application-lifecycle-and-email.md`) to help notice these events — but that subsystem only ever proposes a detected event for the user to confirm; it never submits anything and never has in this design.
 
-### Safeguards
+## "Assist Me" — an explicit, opt-in, post-MVP form-filling helper (not in MVP)
 
-- **Wrong job/company/CV**: before any form-fill, the controller re-confirms the page's visible job title/company against the `CanonicalJob` (itself anchored to Adzuna's structured fields) and confirms which CV/profile version is staged; mismatches abort.
-- **Incorrect form fields**: filled values are read back from the DOM after filling and diffed against intended values before showing the "ready to submit" screen.
-- **Unexpected page changes**: adapters declare expected DOM markers; missing markers abort as an error rather than guessing at a different layout.
-- **Accidental submission**: submit-shaped controls are never auto-clicked by any code path.
-- **Malicious page instructions**: page text is treated purely as data; the automation controller has no natural-language instruction-following pathway at all — see `08-security-and-prompt-injection.md`.
+The one narrow exception to "the app never touches the ATS" is a strictly opt-in, future-phase assistance feature, not part of MVP: while the user is on the employer's application page (having gotten there themselves via the manual flow above), they may click an explicit **"Assist Me"** action in the app. Only then, and only for that specific application, may an assistant help fill in form fields.
 
-### What the automation subsystem is explicitly not allowed to do
+```mermaid
+flowchart TD
+    ONPAGE["User is on the employer/ATS page\n(having navigated there manually)"] --> DEFAULT["Default: user fills everything themselves"]
+    ONPAGE --> ASSISTCLICK["User explicitly clicks 'Assist Me'\n(never happens automatically)"]
+    ASSISTCLICK --> VERIFYPAGE{"Page matches the\nexpected job/application?"}
+    VERIFYPAGE -->|no| ABORT["Abort, notify user, no fields touched"]
+    VERIFYPAGE -->|yes| FILL["Assistant fills fields using ONLY\nverified FACT-level CV/profile data\n(never INFERENCE, never invented)"]
+    FILL --> UNKNOWNFIELDS["Fields with no verified CV/profile answer\nare left blank and flagged UNKNOWN /\n'needs your input' — never guessed"]
+    UNKNOWNFIELDS --> USERREVIEW["User reviews every filled field"]
+    DEFAULT --> USERREVIEW
+    USERREVIEW --> USERSUBMIT["User clicks Submit/Apply themselves,\non the real page — the app has no\ncode path that can do this for them"]
+```
 
-- Search for or discover jobs (that's Adzuna's role, exclusively).
-- Create accounts, accept legal/consent agreements, submit an application, message a recruiter, or bypass a captcha/bot-check.
+Hard rules for this feature, none of which are negotiable if it's ever built:
+
+- **Never activates itself.** There is no code path that invokes field-filling without that specific, explicit "Assist Me" click for that specific application. It does not pre-fill in the background, does not activate on page load, and does not remember to "help again" without being asked again.
+- **Verified data only.** Every value it fills comes from a `FACT`-labeled claim in the user's CV/profile (`02-ai-and-matching-architecture.md`'s claim schema) — the same verified-CV-field discipline used for job matching applies here. If the CV/profile doesn't contain a verified answer for a field, that field is left for the user, explicitly flagged, never guessed or invented.
+- **Never touches Submit.** The assistant fills fields; it does not click, trigger, or otherwise activate the application's final submit/apply control, under any circumstance. That action is always a direct, unassisted click by the user on the real page.
+- **Never makes decisions.** It does not choose between options on the user's behalf (e.g. answering a judgment-call screening question) beyond inserting a verified fact; anything requiring judgment is left for the user.
+- **Page-identity verified before touching anything**, same discipline as any automation in this system: if the visible page doesn't match the expected job/company, it aborts rather than filling blindly.
+
+This is deliberately a much narrower feature than "browser automation prepares an application and the user approves it," which was this document's earlier framing. There is no prepare-then-approve pipeline for submission at all — approval isn't needed because there's nothing automated to approve; the user is always the one physically applying.
+
+## What no version of this system does, ever
+
+- Search the general web for jobs (Adzuna is the exclusive source).
+- Invent a job, URL, company, salary, requirement, or qualification.
+- Submit an application, click a Submit/Apply control, or otherwise complete the final application step on the user's behalf.
+- Create accounts, accept legal/consent agreements, or message a recruiter.
+- Activate any form-filling assistance without that specific, explicit user click, or fill a field with anything other than verified CV/profile data.
