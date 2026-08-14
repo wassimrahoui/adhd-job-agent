@@ -1,6 +1,6 @@
 # Database Design
 
-PostgreSQL, via self-hosted Supabase (see `10-deployment-and-dev-workflow.md`). Every table is owned by the single application user via `user_id`; row-level security policies enforce isolation as defense-in-depth (see `08-security-and-prompt-injection.md`).
+PostgreSQL, via self-hosted Supabase (see `10-deployment-and-dev-workflow.md`). Every table is owned by the single application user via `user_id`; row-level security policies enforce isolation as defense-in-depth.
 
 ## Entity relationships
 
@@ -8,43 +8,30 @@ PostgreSQL, via self-hosted Supabase (see `10-deployment-and-dev-workflow.md`). 
 erDiagram
     users ||--|| profiles : has
     users ||--o{ resumes : has
-    users ||--o{ applications : has
-    users ||--o{ notifications : receives
-    users ||--o{ email_events : has
     users ||--o{ audit_logs : generates
 
     companies ||--o{ jobs : posts
     jobs ||--o{ job_evidence : has
     jobs ||--o{ job_matches : scored_as
     jobs ||--o{ ai_analyses : analyzed_as
-    jobs ||--o{ applications : applied_to
-
-    applications ||--o{ application_events : has
-    applications ||--o{ email_events : linked_to
+    jobs ||--o{ saved_jobs : saved_as
 ```
 
-Note relative to the first version: there is no `job_sources` table and no `saved_jobs` table. **`job_sources` is removed** — Adzuna is the sole, mandatory MVP source (`03-job-sources-and-browser-automation.md`, ADR-004) and its connection config (app_id/app_key, query defaults) lives in server-side application configuration, not a user-editable database table, since there is nothing for the user to configure among multiple sources in MVP. **`saved_jobs` is removed** — saving a job now creates an `applications` row in `SAVED` status (`04-application-lifecycle-and-email.md`), so a separate saved-jobs concept would be redundant.
+Note relative to earlier versions of this design: there is no `job_sources` table (Adzuna is the sole source, and its connection config lives in server-side application configuration, not a user-editable table). There is no `applications`, `application_events`, or `email_events` table — application tracking and email monitoring are not part of this project (see `00-vision-and-requirements.md`, non-goals). `saved_jobs` is a simple bookmark table, not a status/lifecycle object.
 
 ## Tables
 
-- **users** — the application user. Managed by the auth provider; the app's `users` row mirrors the auth subject ID plus app-level fields (created_at, timezone, notification prefs pointer).
-- **profiles** — one row per user, holding the explicit CV/preference field categories that drive both Adzuna query building and AI matching (`02-ai-and-matching-architecture.md`): work experience (structured entries: title, employer, dates, description), technical skills, cybersecurity/networking experience (a named category, not folded into generic "skills"), education, certifications, languages, desired roles/keywords (used to build Adzuna query parameters), location preferences, salary requirements (target/minimum), remote/hybrid/on-site preference, experience level/seniority, excluded skills/companies, scoring-weight overrides. Any field left blank by the user is `UNKNOWN` for matching purposes, never inferred or assumed.
-- **resumes** — uploaded resume files (private object storage reference) plus parsed structured content mapped into the same field categories as `profiles` (work experience, technical skills, cybersecurity/networking experience, education, certifications, languages) so parsed-from-CV and user-entered data share one schema. One resume marked `is_active` at a time.
+- **users** — the application user. Managed by the auth provider; the app's `users` row mirrors the auth subject ID plus app-level fields (created_at, timezone).
+- **profiles** — one row per user, holding the explicit CV/preference field categories that drive both Adzuna query building and AI matching (`02-ai-and-matching-architecture.md`): work experience (structured entries: title, employer, dates, description), technical skills, networking experience, cybersecurity experience, sysadmin experience, education, certifications, languages, desired roles/keywords (used to build Adzuna query parameters), location preferences, salary requirements (target/minimum), remote/hybrid/on-site preference, experience level/seniority, excluded skills/companies, scoring-weight overrides, relevance-score threshold. Any field left blank by the user is `UNKNOWN`/not demonstrated for matching purposes, never inferred or assumed.
+- **resumes** — uploaded resume files (private object storage reference) plus parsed structured content mapped into the same field categories as `profiles`. One resume marked `is_active` at a time.
 - **companies** — deduplicated company records (name, canonical domain if known, industry) referenced by `jobs`.
-- **jobs** — the canonical, deduplicated job record, sourced exclusively from Adzuna in MVP: `adzuna_id`, title, company_id, location, work_mode, employment_type, salary_min/max/currency, `salary_is_predicted` (bool, carried through from Adzuna, never dropped), description (Adzuna's snippet), requirements, skills, `redirect_url`, **`status`** (pipeline-only: `DISCOVERED | NORMALIZED | DUPLICATE | MATCHED | ERROR` — never set by the user or the LLM), posted_at (Adzuna's `created`), discovered_at, updated_at. Nullable wherever Adzuna doesn't provide a field — never backfilled with an invented value.
-- **job_evidence** — one or more rows per job: `source_name` (fixed `"adzuna"` in MVP), source call parameters, raw Adzuna response fields, `redirect_url`, `extracted_at`. Preserves exactly what Adzuna returned, independent of normalization.
-- **job_matches** — one row per job (recomputed on profile change or job update): deterministic sub-scores per factor, `passed_prefilter` (bool — whether this job was ever eligible to reach the LLM at all, per `02-ai-and-matching-architecture.md`), final transparent score, factor breakdown (JSONB), computed_at.
-- **ai_analyses** — one row per AI analysis run on a job: model_used (the exact currently-pinned tag, e.g. `qwen2.5:14b-instruct-q4_K_M` — see `14-model-evaluation.md` for its candidate/benchmark status), prompt_version, `relevance_score`, `recommendation`, `matching_skills` (JSONB array, each item evidence-labeled FACT/INFERENCE/UNKNOWN with `source_excerpt`), `matching_experience` (same shape), `missing_requirements` (same shape), `concerns`, `explanation`, per `02-ai-and-matching-architecture.md`'s schema, status (`success | rejected | ai_unavailable`), created_at. Never overwritten in place — a re-analysis inserts a new row.
-- **applications** — one row per application, created at first user interest ("Save"): job_id, user_id, **`status`** (the 11-value application lifecycle from `04-application-lifecycle-and-email.md`: `SAVED | REVIEWED | APPROVED | PREPARING | READY_FOR_USER | APPLYING | APPLIED | INTERVIEW | OFFER | REJECTED | WITHDRAWN`), applied_at, next_action, follow_up_date, notes.
-- **application_events** — append-only audit trail of every status transition and material action on an application: event_type, actor (`user | ai_assist | email_detection` — `user` covers every direct user action including manual apply and self-attested "Applied"; `ai_assist` is scoped narrowly to the post-MVP opt-in "Assist Me" helper proposing filled field values, never a submission; `email_detection` is a post-MVP proposed event awaiting user confirmation), description, evidence_reference, created_at.
-- **email_events** — detected email classifications: message_reference, category, confidence, extracted_fields (JSONB), evidence_excerpt, `linked_application_id` (nullable until confirmed), user_confirmed (bool), created_at.
-- **notifications** — surfaced items (type, reference to source record, read/dismissed state, created_at). Derived from the tables above, not an independent source of truth.
-- **audit_logs** — append-only system-wide log: actor, action_type, target_table/target_id, outcome, metadata (JSONB, no secrets ever), created_at.
-
-## Application status transition guard
-
-A database-level check (trigger or constraint, matching prototype 2's proven pattern of guarding invalid jumps) enforces that `applications.status` can only move along the edges in the state diagram in `04-application-lifecycle-and-email.md` — e.g. `SAVED → APPLIED` directly is rejected at the database layer, not just the API layer, as defense-in-depth.
+- **jobs** — the canonical, deduplicated job record, sourced exclusively from Adzuna: `adzuna_id`, title, company_id, location, work_mode, employment_type, salary_min/max/currency, `salary_is_predicted` (bool, carried through from Adzuna, never dropped), description (Adzuna's snippet), requirements, skills, `redirect_url`, posted_at (Adzuna's `created`), discovered_at, updated_at. Nullable wherever Adzuna doesn't provide a field — never backfilled with an invented value.
+- **job_evidence** — one or more rows per job: `source_name` (fixed `"adzuna"`), source call parameters, raw Adzuna response fields, `redirect_url`, `extracted_at`. Preserves exactly what Adzuna returned, independent of normalization.
+- **job_matches** — one row per job (recomputed on profile change or job update): deterministic sub-scores per factor, `passed_prefilter` (bool — whether this job was ever eligible to reach the analysis model at all, per `02-ai-and-matching-architecture.md`), final transparent score, factor breakdown (JSONB), computed_at.
+- **ai_analyses** — one row per AI analysis run on a job: model_used (the exact currently-pinned analysis-model tag, e.g. `qwen2.5:14b-instruct-q4_K_M` — see `14-model-evaluation.md` for its candidate/benchmark status), prompt_version, `score`, `recommendation`, `confidence`, `matching_skills` (JSONB array, each item evidence-labeled FACT/INFERENCE/UNKNOWN with `source_excerpt`), `matching_experience` (same shape), `missing_requirements` (JSONB array), `unknown_requirements` (JSONB array), `explanation`, `evidence` (JSONB array, same shape as matching_skills), status (`success | rejected | ai_unavailable`), created_at. Never overwritten in place — a re-analysis inserts a new row.
+- **saved_jobs** — a simple bookmark: user_id, job_id, saved_at, optional note. No status field, no lifecycle, no history beyond saved/not saved.
+- **audit_logs** — append-only log: actor, action_type (AI call, Adzuna call), target_table/target_id, outcome, metadata (JSONB, no secrets ever), created_at.
 
 ## Ownership rule
 
-Every table above except `companies`, `jobs`, and `jobs`-owned children (`job_evidence`, `job_matches`, `ai_analyses`, indirectly owned since the job itself has no single-user column — jobs discovered via Adzuna are shared factual records, not user-private data, in the same way a public job posting isn't private) carries a direct `user_id`. Authorization checks in the backend, and RLS policies in Postgres, both key off this column — one-policy-per-CRUD-verb pattern, no `USING (true)` shortcuts on user-owned data (`08-security-and-prompt-injection.md`).
+Every table above except `companies`, `jobs`, and `jobs`-owned children (`job_evidence`, `job_matches`, `ai_analyses` — indirectly owned since the job itself has no single-user column; jobs discovered via Adzuna are shared factual records, not user-private data, in the same way a public job posting isn't private) carries a direct `user_id`. Authorization checks in the backend, and RLS policies in Postgres, both key off this column — one-policy-per-CRUD-verb pattern, no `USING (true)` shortcuts on user-owned data.
