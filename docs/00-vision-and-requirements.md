@@ -24,15 +24,15 @@ Job hunting is a long sequence of small, repetitive, high-friction tasks — sea
 
 ## Functional requirements
 
-1. Discover jobs from one or more configured sources (API-based where available, page-based/browser-automation otherwise).
-2. Extract the original job content and preserve it (text, and where useful, source URL and raw HTML/DOM snapshot) as evidence.
+1. Discover jobs via Adzuna's job-search API — the sole, mandatory MVP source, queried deterministically from the user's profile. The AI never searches for jobs; Adzuna does (see `03-job-sources-and-browser-automation.md`, ADR-004).
+2. Preserve exactly what Adzuna returned (structured fields, description snippet, redirect URL) as evidence.
 3. Normalize source-specific job data into one canonical job schema.
 4. Deduplicate jobs discovered from the same or different sources.
 5. Maintain a user profile: CV/resume data, skills, preferences, exclusions, salary and location constraints.
 6. Run deterministic matching (title, skills, location, salary, work mode, employment type, exclusions) against the user profile.
 7. Run local LLM analysis for semantic aspects deterministic rules can't capture (transferable skills, nuanced requirements, missing-information flags, plain-language explanation).
 8. Validate every LLM response against a strict schema; reject and flag anything malformed or unsupported by the source text.
-9. Verify LLM factual claims (salary, location, remote status, requirements, deadlines, etc.) against the stored evidence before showing them to the user; label each claim Verified / Inferred / Unknown.
+9. Verify LLM factual claims (salary, location, remote status, requirements, deadlines, etc.) against the stored evidence before showing them to the user; label each claim FACT / INFERENCE / UNKNOWN.
 10. Present jobs, match reasoning, and evidence in an ADHD-friendly interface: one clear next action, minimal choices per screen.
 11. Let the user save, dismiss, or approve a job, and move it through an explicit application lifecycle.
 12. Support browser automation to *prepare* an application (fill forms, stage data) but require explicit user confirmation before any submission.
@@ -45,26 +45,27 @@ Job hunting is a long sequence of small, repetitive, high-friction tasks — sea
 
 - **Privacy**: CV, profile, job history, and application data belong to one user and must never be sent to a third-party AI API in production operation.
 - **Reliability over speed**: a slower, verified answer beats a fast, unverified one everywhere in this system.
-- **Local-first**: the core loop (discover → analyze → review) must keep working with no internet access to any AI provider, using local Ollama; only job-source fetching and the optional email connector require external network access.
+- **Local-first**: the core loop (discover → analyze → review) must keep working with no internet access to any AI provider, using local Ollama; only Adzuna job-source fetching and the optional email connector require external network access.
 - **Auditability**: every AI output, every match decision, and every state transition must be reconstructable after the fact from the audit log and evidence store.
-- **Resilience to source drift**: job pages and ATS layouts change; extraction failures must be visible errors, not silent bad data.
+- **Resilience to source drift**: Adzuna's response shape can change; extraction/normalization failures must be visible errors, not silent bad data.
 - **Resilience to hostile input**: job descriptions and emails are untrusted external text and must never be able to make the system take an action, reveal data, or change its own rules.
 - **Low operational complexity**: runnable by one technically capable user on a single machine (or small self-hosted box) via Docker, without standing up a fleet of services.
-- **Extensibility**: new job sources, new local models, and new ATS targets must be addable without rewriting the core pipeline.
+- **Hardware-aware**: the system must operate within the real, shared hardware budget in `14-model-evaluation.md` — not assume a dedicated machine.
+- **Extensibility**: a second job source, a new local model, or new automation targets must be addable without rewriting the core pipeline, even though only one of each ships in MVP.
 
 ## Primary user journeys
 
 ### Journey 1 — Morning triage
-User opens the app. The home screen shows: how many new jobs were found overnight, how many are strong matches awaiting review, and any application that needs a follow-up today. The user reviews one job at a time: title, company, the deterministic match factors, the AI's plain-language explanation (with Verified/Inferred/Unknown labels), and a clear "why" tied back to the original posting. They approve, save for later, or dismiss — three big obvious actions, nothing else competing for attention.
+User opens the app. The home screen shows: how many new jobs were found overnight, how many are strong matches awaiting review, and any application that needs a follow-up today. The user reviews one job at a time: title, company, the deterministic match factors, the AI's plain-language explanation (with per-claim FACT/INFERENCE/UNKNOWN labels), and a clear "why" tied back to the original posting. They approve, save for later, or dismiss — three big obvious actions, nothing else competing for attention.
 
 ### Journey 2 — Preparing an application
-User approves a job. The system stages an application: pulls relevant CV sections, drafts application material, and (where a browser-automation adapter exists for that source) navigates to the application form and fills it in a controlled browser session. Nothing is submitted. The user reviews the filled form and the staged materials, then explicitly confirms submission — or cancels and applies manually.
+User approves a job. The system stages an application: pulls relevant CV sections, drafts application material, and (where a browser-automation adapter exists for that application URL) navigates to the application form and fills it in a controlled browser session. Nothing is submitted. The user reviews the filled form and the staged materials, then explicitly confirms submission — or cancels and applies manually.
 
 ### Journey 3 — Tracking after applying
-A week later, an email arrives inviting the user to interview. The email-monitoring subsystem detects it, links it to the existing application, and updates the suggested-next-status to "Interview" — but does not silently change the tracked status without the user seeing and confirming the detected event on their dashboard.
+A week later, an email arrives inviting the user to interview. The email-monitoring subsystem detects it, links it to the existing application, and proposes `APPLIED → INTERVIEW` — but does not silently change the tracked status without the user seeing and confirming the detected event on their dashboard.
 
 ### Journey 4 — Trusting the score
-User sees a job scored as a strong match. They tap into "why," see the deterministic factors (skills matched, location compatible, salary in range) and the AI's semantic notes, each traceable to a highlighted excerpt in the original posting. Where the posting doesn't mention something (e.g., remote policy), the system says so explicitly rather than guessing.
+User sees a job scored as a strong match. They tap into "why," see the deterministic factors (skills matched, location compatible, salary in range — all anchored to Adzuna's structured fields) and the AI's semantic notes, each traceable to a highlighted excerpt. Where neither Adzuna nor the description snippet mentions something (e.g., remote policy), the system says so explicitly rather than guessing.
 
 ## What "done" looks like for a healthy system
 

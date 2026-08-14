@@ -1,0 +1,51 @@
+# Local Model Evaluation and Selection
+
+## Target hardware and budget
+
+The Job Agent runs on Wassim's actual machine, shared with other active software (Docker, OpenCode, browser, OS, etc.) — the model choice is constrained by that reality, not by an idealized dedicated-server assumption.
+
+| Resource | Spec | Budget for this app |
+|---|---|---|
+| CPU | Ryzen 9 9950X | Not a binding constraint for inference; matters for the FastAPI/Playwright/scheduler processes, which are lightweight relative to LLM inference |
+| GPU | RTX 5070 Ti, 16GB VRAM | The model **must fit primarily in VRAM** without excessive CPU offloading — offloading layers to system RAM/CPU on every job analysis would defeat the "low concurrency, fast enough to be usable" requirement and compete with everything else on the box |
+| System RAM | 32GB total, shared with other running software | **12–16GB preferred, ~20GB hard ceiling** for the Job Agent's own footprint (backend, Postgres, scheduler, and Ollama's non-VRAM overhead combined) — this is not "32GB available," it's "32GB shared," so the app must be a considerate tenant |
+
+## Selection criteria, in order
+
+1. Reliable structured JSON output under the schemas in `02-ai-and-matching-architecture.md` (this is a job-fit reasoning and evidence-labeling task, not a coding task).
+2. Instruction-following / rule adherence — must reliably answer `UNKNOWN` rather than guess when the schema calls for it.
+3. Hallucination resistance on job-description-style text.
+4. Fits primarily in 16GB VRAM at a quantization level that doesn't meaningfully degrade instruction-following, with headroom left for context and for the fact the GPU isn't dedicated to this app alone.
+5. Fast enough that a low-concurrency (effectively serial) queue is still usable — this app deliberately never parallelizes LLM calls (`02-ai-and-matching-architecture.md`), so single-request latency matters more than raw throughput.
+6. General coding ability is explicitly **not** a selection factor — this model never writes or reviews code for the product; a coder-tuned variant is the wrong shape of model for this job even if it benchmarks well on coding leaderboards.
+
+## Models considered
+
+| Model | Why considered | Why not selected |
+|---|---|---|
+| `qwen2.5-coder:14b` (used in prototype 1's ATS-automation dev work) | Already proven in the prototype history, strong tool-use in some harnesses | Coder-tuned, not instruct/reasoning-tuned for general natural-language judgment; prototype 1's own evidence found a *different* local model structurally unable to emit tool calls in the OpenCode harness — a reminder that model behavior must be verified per-use-case, not assumed to transfer from one role (coding-agent tool use) to another (job-fit analysis) |
+| `llama3.1:8b-instruct` | Smaller, faster, very safe VRAM margin | Weaker structured-output and instruction-adherence reliability than Qwen2.5 14B in this size class; kept as a documented lower-hardware fallback, not the primary pick, since the target GPU comfortably supports the 14B tier |
+| `qwen2.5:32b-instruct` | Stronger reasoning | Does not fit primarily in 16GB VRAM at a quantization level worth trusting for structured output (would require substantial offload) — violates the "fits primarily in VRAM" hardware rule outright |
+| **`qwen2.5:14b-instruct-q4_K_M`** | Strong instruction-following and structured/JSON output (Qwen2.5's own release notes highlight structured-output and long-context reliability as explicit improvements over Qwen2), 14.8B parameters at Q4_K_M is a 9.0GB weights footprint — comfortably primary-VRAM-resident on a 16GB card with room left for context and the fact the GPU isn't dedicated solely to this app, general instruct-tuned (not coder-tuned, correct shape for this task), Apache 2.0 licensed | **Selected** |
+
+## Selected model
+
+```
+qwen2.5:14b-instruct-q4_K_M
+```
+
+- **Exact Ollama tag**: `qwen2.5:14b-instruct-q4_K_M` (verified to resolve on Ollama's library; 14.8B parameters, Q4_K_M quantization, ~9.0GB model weight blob).
+- **VRAM fit**: ~9.0GB of weights leaves roughly 7GB of the 16GB card for KV cache/context and for the fact other software may be using the GPU concurrently — comfortably within budget without relying on CPU offload for normal operation.
+- **RAM fit**: Ollama's non-VRAM overhead for a model this size, plus the FastAPI backend, Postgres, and scheduler, is expected to land within the 12–16GB preferred range and stay well under the ~20GB ceiling; this must be confirmed empirically once implemented (see Verification below) rather than assumed from spec alone.
+- **License**: Apache 2.0 — no restriction relevant to private, non-commercial-adjacent single-user use.
+
+## The model is pinned, not auto-managed
+
+- The application **never** calls `ollama pull` itself, at startup, on first run, or as a "helpful" recovery action. Model management is entirely Wassim's, performed manually via `ollama pull qwen2.5:14b-instruct-q4_K_M`.
+- On startup and before any AI call, the backend checks that the exact pinned tag is present in the local Ollama instance (via Ollama's model-list API). If it is missing, the system enters the `AI_UNAVAILABLE` degraded state (ADR-006) with an explicit, specific error naming the exact missing tag and the exact command to fix it — it does not fall back to a different installed model, does not guess at a "close enough" substitute, and does not silently disable AI features without telling the user why.
+- **No silent substitution, ever.** If a different model happens to be installed under a similar name, the system does not use it in place of the pinned tag. The tag string is compared exactly.
+- Changing the pinned model in the future is a deliberate, documented decision (an update to this file plus the relevant ADR), never an automatic upgrade path, and any change must re-pass the verification step below before being wired into the live pipeline.
+
+## Verification before trust, applied to the model itself
+
+Before this model (or any future replacement) is adopted for real use, it must be run against the hallucination/evidence test suite (`09-testing-strategy.md`) using real Adzuna-shaped fixture jobs with known-correct expected `FACT`/`INFERENCE`/`UNKNOWN` labels, and its actual VRAM/RAM footprint on the real target machine must be measured (not estimated from vendor figures alone) before being treated as "fits the budget" in practice. Spec-sheet VRAM numbers are a starting point for selection, not a substitute for measuring the real thing on Wassim's actual hardware once implementation begins.
