@@ -26,9 +26,11 @@ The Job Agent runs on Wassim's actual machine, shared with other active software
 | `qwen2.5-coder:14b` (used in prototype 1's ATS-automation dev work) | Already proven in the prototype history, strong tool-use in some harnesses | Coder-tuned, not instruct/reasoning-tuned for general natural-language judgment; prototype 1's own evidence found a *different* local model structurally unable to emit tool calls in the OpenCode harness — a reminder that model behavior must be verified per-use-case, not assumed to transfer from one role (coding-agent tool use) to another (job-fit analysis) |
 | `llama3.1:8b-instruct` | Smaller, faster, very safe VRAM margin | Weaker structured-output and instruction-adherence reliability than Qwen2.5 14B in this size class; kept as a documented lower-hardware fallback, not the primary pick, since the target GPU comfortably supports the 14B tier |
 | `qwen2.5:32b-instruct` | Stronger reasoning | Does not fit primarily in 16GB VRAM at a quantization level worth trusting for structured output (would require substantial offload) — violates the "fits primarily in VRAM" hardware rule outright |
-| **`qwen2.5:14b-instruct-q4_K_M`** | Strong instruction-following and structured/JSON output (Qwen2.5's own release notes highlight structured-output and long-context reliability as explicit improvements over Qwen2), 14.8B parameters at Q4_K_M is a 9.0GB weights footprint — comfortably primary-VRAM-resident on a 16GB card with room left for context and the fact the GPU isn't dedicated solely to this app, general instruct-tuned (not coder-tuned, correct shape for this task), Apache 2.0 licensed | **Selected** |
+| **`qwen2.5:14b-instruct-q4_K_M`** | Strong instruction-following and structured/JSON output (Qwen2.5's own release notes highlight structured-output and long-context reliability as explicit improvements over Qwen2), 14.8B parameters at Q4_K_M is a 9.0GB weights footprint — comfortably primary-VRAM-resident on a 16GB card with room left for context and the fact the GPU isn't dedicated solely to this app, general instruct-tuned (not coder-tuned, correct shape for this task), Apache 2.0 licensed | **Current leading candidate — see "Candidate model" below** |
 
-## Selected model
+## Candidate model, pending real-hardware benchmark validation
+
+This is the current leading candidate chosen against the selection criteria and hardware budget above — it is not yet a finalized decision. It becomes the pinned model in practice only after passing the benchmark and evidence-suite validation in "Verification before trust" below on Wassim's real machine. Until then, treat every VRAM/RAM/quality figure in this document as an on-paper estimate to be confirmed, not a settled fact.
 
 ```
 qwen2.5:14b-instruct-q4_K_M
