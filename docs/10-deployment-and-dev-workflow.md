@@ -1,16 +1,21 @@
 # Technology Stack, Deployment, and Development Workflow
 
+## Target hardware
+
+Production runs on Wassim's real machine: **Ryzen 9 9950X, RTX 5070 Ti (16GB VRAM), 32GB system RAM**, shared with other active software (Docker, OpenCode, browser, OS). This is not a dedicated server, and the stack is chosen accordingly — see `14-model-evaluation.md` for the exact model pinned against this hardware's VRAM budget, and ADR-010 for why LLM concurrency and pre-filtering are hard constraints rather than tunable defaults. The application's own footprint (backend, Postgres, scheduler, Ollama's non-VRAM overhead) targets **12–16GB RAM, ~20GB hard ceiling**, leaving room for the rest of what's running on the box.
+
 ## Technology stack (decisive, one primary choice per concern)
 
 | Concern | Choice | Why |
 |---|---|---|
-| Backend / API | Python 3.12 + FastAPI | Reuses prototype 1's already-proven Python pipeline logic (canonical job model, Pydantic schemas, CSV/DB store, Ollama client, Playwright automation) instead of rewriting it in another language; Pydantic gives first-class request/response and AI-schema validation, which is central to this system's evidence/verification requirements; async support suits I/O-bound job discovery and AI calls. |
+| Backend / API | Python 3.12 + FastAPI | Reuses prototype 1's already-proven Python pipeline logic (canonical job model, Pydantic schemas, Ollama client, Playwright automation) instead of rewriting it in another language; Pydantic gives first-class request/response and AI-schema validation, which is central to this system's evidence/verification requirements; async support suits I/O-bound Adzuna calls and AI calls. |
 | Data validation / schemas | Pydantic v2 | Same library used for API models, canonical job schema, and AI response schemas — one validation approach throughout, not three. |
 | Frontend | React 18 + TypeScript + Vite + Tailwind CSS | Directly reuses prototype 2's proven, already-ADHD-oriented frontend architecture and component approach; React Router for the small fixed set of screens in `05-adhd-ux.md`; Tailwind for fast, consistent styling without a heavy design-system dependency. |
 | Database | PostgreSQL | Relational data with clear ownership, needs JSONB for AI-analysis payloads and full-text search for job content — no need for a specialized document/search store at this scale. |
 | Auth | Supabase Auth (GoTrue), self-hosted | Mature, well-tested email/password + JWT implementation; avoids hand-rolling auth; self-hosted via Supabase's open-source Docker stack, so it is not a dependency on Supabase's hosted cloud service. |
-| Object storage | Supabase Storage, self-hosted | Same open-source stack as above, used only for resumes and (optionally) large evidence snapshots; private buckets, signed URLs. |
-| Local AI runtime | Ollama | The spec's absolute requirement; runs the configured local model (see `02-ai-and-matching-architecture.md`) with no cloud dependency. |
+| Object storage | Supabase Storage, self-hosted | Same open-source stack as above, used only for resumes; private buckets, signed URLs. |
+| Job source | Adzuna API | The sole, mandatory MVP job-discovery source; deterministic, structured, rate-limited — see `03-job-sources-and-browser-automation.md`, ADR-004. |
+| Local AI runtime | Ollama, exactly one pinned model (`qwen2.5:14b-instruct-q4_K_M`) | The spec's absolute requirement; runs the one model chosen against the real target hardware (see `14-model-evaluation.md`) with no cloud dependency, manually managed by Wassim. |
 | Browser automation | Playwright (Python) | Same language as the backend, avoiding a second runtime; mature multi-browser support; used only per the safety rules in `03-job-sources-and-browser-automation.md`. |
 | Background jobs / scheduling | APScheduler (in-process) for MVP; documented upgrade path to a lightweight worker (e.g. Celery + Redis) only if/when scheduled-job volume genuinely requires it | Avoids standing up a message broker for a single user's periodic discovery/email-polling jobs; the upgrade path exists but is not built prematurely. |
 | Containerization | Docker + Docker Compose | Standard, well-understood, matches the "Docker-compatible, self-hosted" requirement without requiring a specific cloud provider. |
@@ -22,21 +27,19 @@ Only three self-hostable Supabase components are used: **PostgreSQL**, **GoTrue 
 ## Deployment
 
 - **Development**: everything (Postgres/Auth/Storage via `docker-compose`, Ollama, FastAPI backend with hot reload, Vite dev server) runs on the developer's local machine.
-- **Production**: self-hosted on the user's own machine or a small home/private server, via the same Docker Compose stack, no cloud services required. Ollama can run on the same host (with a capable GPU/CPU) or on another machine on the user's local network, addressed via configuration.
+- **Production**: self-hosted on Wassim's own machine, via the same Docker Compose stack, no cloud services required. Ollama runs on the same host, sharing the GPU/RAM budget in `14-model-evaluation.md`.
 - No requirement for Kubernetes, a cloud provider account, or a managed database — deliberately, since this is a single-user product and that infrastructure would add operational burden with no benefit.
 
 ```mermaid
 flowchart TB
-    subgraph Host["Self-hosted host (Docker Compose)"]
+    subgraph Host["Self-hosted host (Docker Compose) — Ryzen 9 9950X / RTX 5070 Ti 16GB / 32GB RAM"]
         FE["Frontend (static build, served via nginx or FastAPI)"]
         BE["Backend (FastAPI)"]
         PG[("PostgreSQL")]
         AUTH["GoTrue (Auth)"]
         STOR["Storage"]
         SCHED["Scheduler (in-process, part of Backend)"]
-    end
-    subgraph AIHost["Local AI host (same machine or LAN)"]
-        OLLAMA["Ollama + configured model"]
+        OLLAMA["Ollama + qwen2.5:14b-instruct-q4_K_M (pinned)"]
     end
     BE --> PG
     BE --> AUTH
@@ -47,7 +50,7 @@ flowchart TB
 
 ## Development workflow (building this project) — separate from the product's runtime AI
 
-- **Development coding agent**: OpenCode, using a locally-hosted or Ollama-served coding-capable model for implementation tasks. This is explicitly *not* the same model or runtime as the product's Ollama-served analysis model (`02-ai-and-matching-architecture.md`) — a coder-tuned model is a reasonable choice for writing code, but the product's job-analysis model is chosen for instruction-following and structured natural-language reasoning, not coding ability. These two model choices are configured completely independently and must never be assumed to be the same model.
+- **Development coding agent**: OpenCode, using a locally-hosted or Ollama-served coding-capable model for implementation tasks. This is explicitly *not* the same model or runtime as the product's Ollama-served analysis model (`02-ai-and-matching-architecture.md`, `14-model-evaluation.md`) — a coder-tuned model is a reasonable choice for writing code, but the product's job-analysis model is chosen for instruction-following and structured natural-language reasoning, not coding ability. These two model choices are configured completely independently and must never be assumed to be the same model.
 - **No Claude anywhere in this loop.** Per rule 1 and rule 4, Claude may be used by a human maintainer as a general-purpose assistant outside this project's own tooling (e.g. to write this specification), but it is not wired into the development pipeline, the coding agent, or the product.
 - **No coordinator.** Prototype 1's coordinator (a message-broker enabling two coding agents to hand off tasks) was development infrastructure for *that* prototype's multi-agent experiment and is explicitly excluded here (ADR-001). Development proceeds as: developer instructs OpenCode directly with a scoped, well-defined task; OpenCode implements; the developer (or a review pass) independently re-runs the tests and inspects the diff rather than trusting a self-reported "tests pass" — directly carrying forward the one lesson from prototype 1 worth keeping from that whole apparatus (verify, don't trust an agent's self-report), without the coordination machinery around it.
 - **Task sizing**: implementation proceeds in small, independently-testable increments (mirroring prototype 1's "single-task rule"), each with explicit acceptance criteria drawn from this specification, reviewed against the actual code and test run before being considered done.

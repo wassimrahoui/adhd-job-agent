@@ -2,24 +2,36 @@
 
 ## MVP — the complete core loop, nothing more
 
-Find job → Extract → Normalize → Deduplicate → Match → Analyze → Verify → Show user → User decides → Track result.
+Find job (Adzuna) → Normalize → Deduplicate → Pre-filter → Match → Analyze → Verify → Show user → User decides → Track result.
 
 **In scope for MVP:**
 
-- One job source connector (page-based or API-based, whichever the user's actual target sites support most reliably — chosen at implementation time, not prescribed here since it depends on real target sites).
-- Full canonical job model, evidence storage, normalization, deduplication.
-- User profile and single active resume.
+- The Adzuna job source connector — the sole, mandatory MVP source (`03-job-sources-and-browser-automation.md`, ADR-004). No second source, no mock pool.
+- Full canonical job model, evidence storage (Adzuna's structured fields + snippet + redirect_url), normalization, deduplication.
+- The cheap deterministic pre-filter, so no job reaches the LLM without first passing hard exclusion/skill/location/salary checks.
+- User profile (including Adzuna query defaults: keywords, location, salary floor, category) and single active resume.
 - Deterministic matching engine with configurable weights.
-- Local Ollama AI analysis with full schema validation and evidence verification (all six defense layers).
+- Local Ollama AI analysis against the one pinned model (`14-model-evaluation.md`), full schema validation and FACT/INFERENCE/UNKNOWN evidence verification (all six defense layers), low/queued concurrency (default 1).
 - ADHD-friendly review screens: Home/Today, Job Review, Saved.
-- Application tracking through the full state machine, with manual status updates (email monitoring not required for MVP).
-- Application preparation (staged materials) with manual apply (browser-automation submission prep can follow once one source is proven reliable).
-- Audit logging for all AI calls and status transitions.
+- Application tracking through the full 11-state lifecycle (`04-application-lifecycle-and-email.md`), with manual status updates (email monitoring not required for MVP).
+- Application preparation (staged materials) through `READY_FOR_USER`, with manual apply — browser-automation form-fill can follow once staged-materials preparation is proven reliable.
+- Audit logging for all AI calls, Adzuna calls, and status transitions.
 - Authentication and RLS-backed data isolation.
 
-**Explicitly out of MVP** (moved to later phases below): multiple job sources, browser-automation application preparation/fill, email monitoring, notifications beyond the Home screen's own queries, model-swapping UI (config-file only for MVP).
+**Explicitly out of MVP:**
 
-MVP succeeds when a user can, end to end, get a newly posted job discovered, see an honest evidence-backed match explanation, approve it, track it through to Applied, and trust every claim shown along the way — without any step requiring a cloud AI call or an unverified AI claim.
+- Any job source other than Adzuna, including any general-purpose scraper or a second API-based connector.
+- Full-page extraction of the original posting via browser automation (Adzuna's structured fields + snippet are sufficient for MVP matching/evidence).
+- Browser-automation application form-fill (`PREPARING`/`READY_FOR_USER` in MVP use staged materials only, applied manually).
+- Email monitoring and its associated confirmation UI.
+- Notifications beyond the Home screen's own live queries (no push/email/SMS notification channel).
+- Any model-swapping UI — the pinned model is a config-file value plus this document's own record, not a user-facing setting in MVP.
+- LLM concurrency above the low default — no "speed up analysis" control in MVP.
+- Any multi-user, multi-tenant, or organization concept.
+- A `job_sources` configuration table/UI (there is nothing to configure among sources in MVP; see `06-database-design.md`).
+- Any bulk/automatic apply-to-many-jobs action, at any confirmation level.
+
+MVP succeeds when a user can, end to end, get a newly posted job discovered via Adzuna, see an honest evidence-backed match explanation, approve it, track it through to Applied, and trust every claim shown along the way — without any step requiring a cloud AI call, an unverified AI claim, or the LLM ever deciding what jobs exist.
 
 ## Roadmap
 
@@ -43,16 +55,16 @@ The spec's suggested phase order is kept largely as-is — it is already sound: 
 
 - **Phase 0 — Architecture.** This document set.
 - **Phase 1 — Core data model.** `users`, `profiles`, `jobs`, `job_evidence`, `companies`, migrations, RLS policies.
-- **Phase 2 — Job discovery.** Source adapter interface, first real connector, discovery orchestrator, scheduler.
-- **Phase 3 — Normalization / deduplication.** Canonical mapping, dedup identity strategy, unit + fixture tests.
-- **Phase 4 — User profile / CV.** Profile CRUD, resume upload + parsing, active-resume selection.
-- **Phase 5 — Matching.** Deterministic engine, configurable weights, `job_matches`, factor-breakdown API/UI.
-- **Phase 6 — Local AI analysis.** Ollama adapter, model config layer, structured schemas, evidence verification built in from the start, `ai_analyses`.
-- **Phase 7 — Evidence / verification hardening.** Dedicated verification module extraction, Verified/Inferred/Unknown labeling end to end, hallucination test suite.
+- **Phase 2 — Job discovery.** Source adapter interface plus the one real implementation (Adzuna connector), discovery orchestrator, scheduler, quota handling.
+- **Phase 3 — Normalization / deduplication.** Adzuna-field canonical mapping, dedup identity strategy (Adzuna id → redirect_url → composite key), unit + fixture tests.
+- **Phase 4 — User profile / CV.** Profile CRUD (including Adzuna query defaults), resume upload + parsing, active-resume selection.
+- **Phase 5 — Matching.** Deterministic engine, configurable weights, the cheap pre-filter, `job_matches`, factor-breakdown API/UI.
+- **Phase 6 — Local AI analysis.** Ollama adapter pinned to the exact model in `14-model-evaluation.md`, low/queued concurrency, structured FACT/INFERENCE/UNKNOWN schemas, evidence verification (Adzuna-wins rule) built in from the start, `ai_analyses`.
+- **Phase 7 — Evidence / verification hardening.** Dedicated verification module extraction, FACT/INFERENCE/UNKNOWN labeling end to end, hallucination test suite.
 - **Phase 8 — ADHD UI.** Home/Today, Job Review, Saved, Profile screens.
 - **Phase 9 — Application tracking.** State machine, `applications`/`application_events`, Application Prep and Applications screens, manual status updates.
 - **Phase 10 — Browser automation.** Playwright controller, Stop→Show→Wait→Continue gate, first automated-prep adapter, safeguards from `03-job-sources-and-browser-automation.md`.
 - **Phase 11 — Email monitoring.** Mailbox connector, classification pipeline, event linking + confirmation UI.
-- **Phase 12 — Hardening / testing.** Full adversarial/edge-case suite from `09-testing-strategy.md`, security review, performance pass, documentation reconciliation against actual implementation.
+- **Phase 12 — Hardening / testing.** Full adversarial/edge-case suite from `09-testing-strategy.md`, security review, real-hardware VRAM/RAM measurement against `14-model-evaluation.md`'s budget, documentation reconciliation against actual implementation.
 
 Each phase should be treated as version-gated in the same spirit as prototype 1's MASTER_PLAN — a phase isn't "done" until its own acceptance criteria (derived from this document set) are met and independently verified, not just implemented.
