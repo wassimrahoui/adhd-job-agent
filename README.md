@@ -21,6 +21,7 @@ A private, single-user, ADHD-friendly AI job-hunting assistant. It finds jobs vi
 13. [`docs/12-architecture-decisions.md`](docs/12-architecture-decisions.md) — the ten ADRs (ADR-001–ADR-010), and where/why this design departs from the two prior prototypes.
 14. [`docs/13-risks-and-mitigations.md`](docs/13-risks-and-mitigations.md) — known risks and how the design addresses them.
 15. [`docs/14-model-evaluation.md`](docs/14-model-evaluation.md) — the exact target hardware budget and the current candidate local model, pending real-hardware benchmark validation.
+16. [`docs/15-development-process.md`](docs/15-development-process.md) — how implementation is planned, decomposed into EASY/MEDIUM/HARD tasks, executed, tested, committed, and tracked via `AGENT_TASKS.md` and a live progress dashboard, once implementation begins.
 
 **Status note:** this is a proposed architecture only. No application source code exists in this repository, and none should be written from it without Wassim's explicit approval — the design phase being complete is not authorization to begin implementation.
 

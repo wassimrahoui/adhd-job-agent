@@ -53,7 +53,7 @@ flowchart LR
 
 The spec's suggested phase order is kept largely as-is — it is already sound: data model and discovery must exist before matching can run, matching must exist before AI analysis has anything deterministic to sit alongside, and evidence/verification must be built into the AI phase from day one rather than bolted on afterward (this is the one place a strict reading of "Phase 7 comes after Phase 6" could mislead — verification is not an add-on step done later, it is part of the AI Analysis Engine's own contract starting in Phase 6; Phase 7 is where the dedicated Evidence & Verification Layer is hardened and made reusable, not where verification first appears).
 
-- **Phase 0 — Architecture.** This document set.
+- **Phase 0 — Architecture.** This document set. Before Phase 1 begins, the pre-implementation planning pass described in `15-development-process.md` runs to completion: both prototypes' source code and this full document set are read, `AGENT_TASKS.md` is created, and the initial task hierarchy is recursively decomposed until every executable task is EASY.
 - **Phase 1 — Core data model.** `users`, `profiles`, `jobs`, `job_evidence`, `companies`, migrations, RLS policies.
 - **Phase 2 — Job discovery.** Source adapter interface plus the one real implementation (Adzuna connector), discovery orchestrator, scheduler, quota handling.
 - **Phase 3 — Normalization / deduplication.** Adzuna-field canonical mapping, dedup identity strategy (Adzuna id → redirect_url → composite key), unit + fixture tests.
