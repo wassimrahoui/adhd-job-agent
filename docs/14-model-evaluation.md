@@ -8,9 +8,9 @@ The Job Agent runs on Wassim's actual machine, shared with other active software
 
 | Resource | Spec | Budget for this app |
 |---|---|---|
-| CPU | Ryzen 9 9950X | Not a binding constraint for inference; matters for the FastAPI/scheduler processes, which are lightweight relative to LLM inference |
-| GPU | RTX 5070 Ti, 16GB VRAM | The model **must fit primarily in VRAM** without excessive CPU offloading — offloading layers to system RAM/CPU on every job analysis would defeat the "low concurrency, fast enough to be usable" requirement and compete with everything else on the box |
-| System RAM | 32GB total, shared with other running software | **12–16GB preferred, ~20GB hard ceiling** for the Job Agent's own footprint (backend, Postgres, scheduler, and Ollama's non-VRAM overhead combined) — this is not "32GB available," it's "32GB shared," so the app must be a considerate tenant |
+| CPU | Ryzen 9 9950X | Not a binding constraint for inference; matters for the FastAPI backend process, which is lightweight relative to LLM inference |
+| GPU | RTX 5070 Ti, 16GB VRAM | The model **must fit primarily in VRAM** without excessive CPU offloading — offloading layers to system RAM/CPU on every job analysis would defeat the "sequential, fast enough to be usable" requirement and compete with everything else on the box |
+| System RAM | 32GB total, shared with other running software | **12–16GB preferred, ~20GB hard ceiling** for the Job Agent's own footprint (backend, SQLite, and Ollama's non-VRAM overhead combined) — this is not "32GB available," it's "32GB shared," so the app must be a considerate tenant |
 
 ## Selection criteria, in order — not hard-coded to an arbitrary popular model
 
@@ -20,7 +20,7 @@ The analysis model is not chosen because it's popular or well-known; it is selec
 2. Instruction-following / rule adherence — must reliably answer `UNKNOWN`/not-demonstrated rather than guess when the schema calls for it.
 3. CV/job matching accuracy and hallucination resistance on job-description-style and CV-style text — measured against fixtures with known-correct expected matches, not assumed from general benchmarks.
 4. Fits primarily in 16GB VRAM at a quantization level that doesn't meaningfully degrade instruction-following, with headroom left for context and for the fact the GPU isn't dedicated to this app alone.
-5. Response speed fast enough that a low-concurrency (effectively serial) queue is still usable — this app deliberately never parallelizes LLM calls (`02-ai-and-matching-architecture.md`), so single-request latency matters more than raw throughput.
+5. Response speed fast enough that the strictly sequential, one-job-at-a-time processing loop is still usable — this app deliberately never parallelizes LLM calls (`02-ai-and-matching-architecture.md`), so single-request latency matters more than raw throughput.
 6. Multilingual reasoning quality (at minimum English, German, French) to the extent the user's job search spans those languages.
 7. **Coding ability is explicitly not a selection factor.** This model never writes or reviews code for this project; a coder-tuned variant is the wrong shape of model for job/CV analysis even if it benchmarks well on coding leaderboards. Coding-agent model selection (if any) is an entirely separate, unrelated decision made for development tooling, not documented here.
 
@@ -43,7 +43,7 @@ qwen2.5:14b-instruct-q4_K_M
 
 - **Exact Ollama tag**: `qwen2.5:14b-instruct-q4_K_M` (verified to resolve on Ollama's library; 14.8B parameters, Q4_K_M quantization, ~9.0GB model weight blob).
 - **VRAM fit**: ~9.0GB of weights leaves roughly 7GB of the 16GB card for KV cache/context and for the fact other software may be using the GPU concurrently — comfortably within budget without relying on CPU offload for normal operation.
-- **RAM fit**: Ollama's non-VRAM overhead for a model this size, plus the FastAPI backend, Postgres, and scheduler, is expected to land within the 12–16GB preferred range and stay well under the ~20GB ceiling; this must be confirmed empirically once implemented (see Verification below) rather than assumed from spec alone.
+- **RAM fit**: Ollama's non-VRAM overhead for a model this size, plus the FastAPI backend and SQLite, is expected to land within the 12–16GB preferred range and stay well under the ~20GB ceiling; this must be confirmed empirically once implemented (see Verification below) rather than assumed from spec alone.
 - **License**: Apache 2.0 — no restriction relevant to private, non-commercial-adjacent single-user use.
 
 ## The model is pinned, not auto-managed
@@ -55,4 +55,4 @@ qwen2.5:14b-instruct-q4_K_M
 
 ## Verification before trust, applied to the model itself
 
-Before this model (or any future replacement) is adopted for real use, it must be run against the hallucination/evidence test suite (`09-testing-strategy.md`) using real Adzuna-shaped fixture jobs and fixture CVs with known-correct expected `FACT`/`INFERENCE`/`UNKNOWN` labels, and its actual VRAM/RAM footprint and response speed on the real target machine must be measured (not estimated from vendor figures alone) before being treated as "fits the budget" in practice. Spec-sheet VRAM numbers are a starting point for selection, not a substitute for measuring the real thing on Wassim's actual hardware once implementation begins.
+Before this model (or any future replacement) is adopted for real use, it must be run against the evidence test suite (`09-testing-strategy.md`) using real Adzuna-shaped fixture jobs and fixture CVs with known-correct expected `matching_skills`/`missing_requirements`/`unknown_requirements` outcomes, and its actual VRAM/RAM footprint and response speed on the real target machine must be measured (not estimated from vendor figures alone) before being treated as "fits the budget" in practice. Spec-sheet VRAM numbers are a starting point for selection, not a substitute for measuring the real thing on Wassim's actual hardware once implementation begins.

@@ -2,7 +2,7 @@
 
 This document specifies *how implementation work on this project is planned, decomposed, executed, tested, committed, and made visible* — it governs the coding agent's workflow, not the ADHD Job Agent product itself. Everything in `00`–`14` remains the architecture; this document is the process layer that turns that architecture into shipped, testable code in small, verifiable steps.
 
-**Scope note — do not confuse this with the product's own Home/Today screen.** `05-adhd-ux.md` describes screens that are part of the *product* the end user sees. This document describes a separate, developer-facing **task/progress dashboard** used to monitor implementation of the project itself — a dev tool, not a feature listed in `00-vision-and-requirements.md` or `05-adhd-ux.md`. The two are unrelated pages serving unrelated audiences and must not be merged into one screen.
+**Scope note — do not confuse this with the product's own UI.** `05-adhd-ux.md` describes the four screens that are part of the *product* the end user sees. This document describes a separate, developer-facing **task/progress dashboard** used to monitor implementation of the project itself — a dev tool, not a feature listed in `00-vision-and-requirements.md` or `05-adhd-ux.md`. The two are unrelated pages serving unrelated audiences and must not be merged into one screen.
 
 **Scope note — this dashboard is a display, not a controller.** It is explicitly **not** an AI coordinator, does not orchestrate or control any agent, and does not itself make task-selection decisions. It only reads and displays state that the coding agent's own process (below) already produces. This distinction matters given ADR-001's hard "no coordinator, no multi-agent architecture" rule — the dashboard must never grow into anything resembling one.
 
@@ -36,7 +36,7 @@ Every task entry, at any level of the hierarchy, must contain:
 
 **What counts as EASY:** implementable and testable in one focused change. Small, independently testable, easy to understand at a glance, limited in scope, completable in one short development cycle, and capable of producing a meaningful, demonstrable result on its own. A task is not EASY just because it's been renamed or split shallowly — if completing it still requires several non-trivial implementation steps or touches many unrelated concerns, it is decomposed further, not relabeled.
 
-**Illustrative example of the decomposition depth this requires:** a HARD task like "Ollama Job Analysis Integration" is not implemented directly. It first breaks into MEDIUM areas: prompt/context construction from the job and profile, the Ollama client call itself, structured-output parsing, schema validation, evidence verification against Adzuna fields and the CV, and the low-concurrency queue. Each of those MEDIUM areas is then broken down again into EASY leaves — e.g. "Write the Pydantic model for the analysis response schema," "Implement the Ollama HTTP client wrapper with a configurable timeout," "Implement the FIFO analysis queue with concurrency=1," "Implement the deterministic substring check that verifies a `FACT`-labeled claim against the stored job snippet," each independently buildable and testable.
+**Illustrative example of the decomposition depth this requires:** a HARD task like "Ollama Job Analysis Integration" is not implemented directly. It first breaks into MEDIUM areas: compact prompt/context construction from the job and profile, the Ollama client call itself, structured-output parsing, schema validation with a single retry, and the evidence containment check. Each of those MEDIUM areas is then broken down again into EASY leaves — e.g. "Write the Pydantic model for the analysis response schema," "Implement the Ollama HTTP client wrapper with a configurable timeout," "Implement the sequential one-job-at-a-time analysis loop," "Implement the substring containment check that verifies a claim's `source_excerpt` appears in the supplied job/CV context," each independently buildable and testable.
 
 **Dependencies survive decomposition.** If Task A requires Task B's output, that dependency is preserved (and typically refined into more specific dependencies) as both are broken down — never bypassed, never assumed away because the pieces got smaller.
 
@@ -46,9 +46,9 @@ Tasks progress through increasing levels of dependency and complexity. This is a
 
 - **L1** — Documentation, configuration, basic project setup, simple data models, utility functions.
 - **L2** — Database models/migrations, basic API scaffolding, basic UI shell and navigation.
-- **L3** — Adzuna connector, normalization, deduplication, the deterministic pre-filter.
-- **L4** — CV/profile processing and the deterministic matching engine.
-- **L5** — Ollama integration, structured AI analysis, evidence verification.
+- **L3** — Adzuna connector, normalization, deduplication, the deterministic pre-filter (a fixed set of checks, no weighting framework).
+- **L4** — CV/profile processing.
+- **L5** — Ollama integration, structured AI analysis, the sequential one-job-at-a-time loop, evidence verification.
 - **L6** — End-to-end pipeline wiring, UI integration against real data, performance optimization on real hardware.
 
 ## Task execution loop
@@ -82,7 +82,7 @@ A dynamic, browser-viewable page for watching implementation progress in real ti
 
 **Live updates, no manual refresh.** The dashboard updates automatically as task events occur. Use whichever of WebSocket, Server-Sent Events, or lightweight polling is simplest and reliable for this stack — no unnecessary real-time infrastructure (no message broker, no pub/sub cluster) is justified for a single-user, single-machine tool.
 
-**State persistence.** Task state must survive a browser refresh, a backend restart, and a coding-agent restart — persisted through the project's own backend/database (Postgres, per `06-database-design.md`), not held only in browser memory or an in-process variable that resets on restart.
+**State persistence.** Task state must survive a browser refresh, a backend restart, and a coding-agent restart — persisted through the project's own backend/database (SQLite, per `06-database-design.md`), not held only in browser memory or an in-process variable that resets on restart.
 
 ## Git discipline
 
@@ -96,7 +96,7 @@ A dynamic, browser-viewable page for watching implementation progress in real ti
 
 Implementation prioritizes complete vertical slices over horizontal layers whenever practical — a thin path all the way from UI through backend to data, rather than a fully built backend with no visible surface for weeks. Illustrative sequence: a working UI shell with navigation → the UI wired to a real backend endpoint → that endpoint backed by real database persistence → the UI backed by a real Adzuna search → the same flow with deterministic filtering applied → the same flow with real Ollama analysis applied on top. Each step in that sequence is itself a testable milestone, not an internal-only change.
 
-**UI first.** The first usable milestone includes an application shell, navigation, the product's own home screen, a job search page, job results, job details, and the task/progress dashboard described above — so there is something to open in a browser and interact with from very early in the project, not just once the backend is "done."
+**UI first.** The first usable milestone includes an application shell, navigation, the Jobs/Search screen, job results, job details, and the task/progress dashboard described above — so there is something to open in a browser and interact with from very early in the project, not just once the backend is "done."
 
 **Temporary mocks are allowed during development, never in production.** Controlled test data, fixture jobs, or a canned AI-analysis response are acceptable while a real dependency (Adzuna, Ollama) isn't wired up yet, so UI and integration work can proceed and be demonstrated. The moment the real dependency is ready, the mock is replaced — a mock is never left in as a silent production fallback (this is the same principle as ADR-006's ban on a fabricated "demo analysis," extended to development practice generally).
 
@@ -104,13 +104,9 @@ Implementation prioritizes complete vertical slices over horizontal layers whene
 
 After every meaningful milestone, report: what was built, how to start it, where to open it (URL/port), what can actually be tested right now, and known limitations at this point. This keeps every reported milestone concrete and verifiable rather than a status claim taken on faith — consistent with ADR-002's "never trust a self-reported action" applied to development progress itself.
 
-## Optional development memory layer (Mem0)
+## No development memory layer
 
-Mem0 (or an equivalent memory layer) **may** be used, optionally, during development if it genuinely helps a local coding agent's performance — for example, remembering architectural decisions already made, work already completed, bugs already found and fixed, and known constraints, so the agent doesn't have to rediscover them by re-reading large amounts of source on every task. If used:
-
-- It never replaces source code, documentation, Git history, or `AGENT_TASKS.md` as the authoritative record — those remain the source of truth regardless of what's in memory.
-- The coding agent retrieves only memories relevant to the current task, never the entire memory store, into context.
-- If it adds complexity without a clear, demonstrated benefit, it is simply not used — this is an optional tool, never a mandatory dependency of the development process.
+Mem0, or any other development-time memory layer, is not part of this project's development process. It is not installed, not integrated, not a dependency, and the workflow above is not designed around it. This was considered and explicitly ruled out — it may be reconsidered in the future if a real, demonstrated need for it appears, but it is not deferred to a "Phase 2" and nothing in this document should be read as leaving room for it to slip in by default. The coding agent relies on `AGENT_TASKS.md`, this document set, and the existing source code and tests as its complete working context, per-task, as described above.
 
 ## Development cycle, end to end
 
@@ -143,4 +139,4 @@ This document is part of the approved architecture set (`00`–`15`); it is desi
 
 ## What this document does not change
 
-Everything in `00`–`14` stands as currently scoped: Adzuna as the sole job-fact source with the AI never originating or searching for jobs; CV/profile-based matching with explicit field categories and `UNKNOWN`/not-demonstrated for anything unstated; the deterministic pre-filter and configurable relevance-threshold cutoff; the FACT/INFERENCE/UNKNOWN evidence schema with named `matching_skills`/`matching_experience`/`missing_requirements`/`unknown_requirements`; local-only Ollama with no cloud fallback and a single manually-managed candidate analysis model, kept completely separate from any coding model; low/queued LLM concurrency; the system's involvement ending at the original application link, with no application tracking, no browser automation, no "Assist Me," and no email monitoring anywhere in the project; no coordinator, no multi-agent architecture, no Claude in the product; untrusted job text treated simply as data with no dedicated prompt-injection subsystem; and the 32GB RAM / 16GB VRAM shared-hardware budget. Nothing in this process document authorizes or implies a change to any of those decisions.
+Everything in `00`–`14` stands as currently scoped: Adzuna as the sole job-fact source with the AI never originating or searching for jobs, triggered only by an explicit user action; CV/profile-based matching with explicit field categories and `UNKNOWN`/`NOT_DEMONSTRATED` for anything unstated; the fixed-check deterministic pre-filter (no configurable weighting framework) and relevance-threshold cutoff; the simple five-point evidence-checking pipeline with named `matching_skills`/`matching_experience`/`missing_requirements`/`unknown_requirements`; local-only Ollama with no cloud fallback and a single manually-managed candidate analysis model, kept completely separate from any coding model; strictly sequential (concurrency = 1) LLM processing with no queue/worker system; SQLite as the only database, with no auth service for the MVP; the system's involvement ending at the original application link, with no application tracking, no browser automation, no "Assist Me," and no email monitoring anywhere in the project; no coordinator, no multi-agent architecture, no Claude in the product, no Mem0 or other memory layer; untrusted job text treated simply as data with no dedicated prompt-injection subsystem; and the 32GB RAM / 16GB VRAM shared-hardware budget. Nothing in this process document authorizes or implies a change to any of those decisions.

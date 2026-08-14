@@ -2,49 +2,40 @@
 
 ## Target hardware
 
-Production runs on Wassim's real machine: **Ryzen 9 9950X, RTX 5070 Ti (16GB VRAM), 32GB system RAM**, shared with other active software (Docker, browser, coding tools, OS). This is not a dedicated server, and the stack is chosen accordingly — see `14-model-evaluation.md` for the exact analysis model selected against this hardware's VRAM budget, and ADR-010 for why LLM concurrency and pre-filtering are hard constraints rather than tunable defaults. The application's own footprint (backend, Postgres, scheduler, Ollama's non-VRAM overhead) targets **12–16GB RAM, ~20GB hard ceiling**, leaving room for the rest of what's running on the box. The project must never be designed around assuming the full 32GB or the full 16GB VRAM is available to it alone.
+Production runs on Wassim's real machine: **Ryzen 9 9950X, RTX 5070 Ti (16GB VRAM), 32GB system RAM**, shared with other active software (Docker, browser, coding tools, OS). This is not a dedicated server, and the stack is chosen accordingly — see `14-model-evaluation.md` for the exact analysis model selected against this hardware's VRAM budget, and ADR-010 for why LLM concurrency is fixed at 1 and pre-filtering runs before any model call. The application must not attempt to consume all 32GB of RAM; its own footprint (backend, SQLite, Ollama's non-VRAM overhead) targets **12–16GB RAM, ~20GB hard ceiling**, leaving room for the rest of what's running on the box.
 
 ## Technology stack (decisive, one primary choice per concern)
 
 | Concern | Choice | Why |
 |---|---|---|
-| Backend / API | Python 3.12 + FastAPI | Pydantic gives first-class request/response and AI-schema validation, which is central to this system's evidence/verification requirements; async support suits I/O-bound job discovery and AI calls. |
-| Data validation / schemas | Pydantic v2 | Same library used for API models, canonical job schema, and AI response schemas — one validation approach throughout, not three. |
-| Frontend | React 18 + TypeScript + Vite + Tailwind CSS | React Router for the small fixed set of screens in `05-adhd-ux.md`; Tailwind for fast, consistent styling without a heavy design-system dependency. |
-| Database | PostgreSQL | Relational data with clear ownership, needs JSONB for AI-analysis payloads and full-text search for job content — no need for a specialized document/search store at this scale. |
-| Auth | Supabase Auth (GoTrue), self-hosted | Mature, well-tested email/password + JWT implementation; avoids hand-rolling auth; self-hosted via Supabase's open-source Docker stack, so it is not a dependency on Supabase's hosted cloud service. |
-| Object storage | Supabase Storage, self-hosted | Same open-source stack as above, used only for resumes; private buckets, signed URLs. |
+| Backend / API | Python 3.12 + FastAPI | Pydantic gives first-class request/response and AI-schema validation, which is central to this system's evidence-checking requirement; async support suits I/O-bound Adzuna and Ollama calls. |
+| Data validation / schemas | Pydantic v2 | Same library used for API models, canonical job schema, and AI response schemas — one validation approach throughout. |
+| Frontend | React 18 + TypeScript + Vite + Tailwind CSS | React Router for the four fixed screens in `05-adhd-ux.md`; Tailwind for fast, consistent styling without a heavy design-system dependency. |
+| Database | **SQLite**, single file | One local user, modest data volume (one profile, a search's worth of jobs, their analyses) — a database server adds operational surface with no benefit here (`06-database-design.md`, ADR-005). |
+| Auth | None for the MVP | Single local user on their own machine; nothing to authenticate against (`01-architecture-overview.md`). |
+| File storage | Local filesystem | The one resume file lives on disk, referenced by path from `profile`; no object-storage service. |
 | Job source | Adzuna API | The sole job-discovery source; deterministic, structured, rate-limited — see `03-job-sources.md`, ADR-004. |
-| Local AI runtime | Ollama, exactly one pinned analysis model at a time — currently `qwen2.5:14b-instruct-q4_K_M` as the leading candidate, pending real-hardware benchmark validation | Runs one large model, chosen and validated against the real target hardware (see `14-model-evaluation.md`), with no cloud dependency, manually managed by Wassim. Used only for job/CV analysis, never for coding this project. |
-| Background jobs / scheduling | APScheduler (in-process); documented upgrade path to a lightweight worker (e.g. Celery + Redis) only if/when scheduled-job volume genuinely requires it | Avoids standing up a message broker for a single user's periodic discovery jobs; the upgrade path exists but is not built prematurely. |
-| Containerization | Docker + Docker Compose | Standard, well-understood, matches the "Docker-compatible, self-hosted" requirement without requiring a specific cloud provider. |
-
-### Which Supabase parts are used, and self-hosting compatibility
-
-Only three self-hostable Supabase components are used: **PostgreSQL**, **GoTrue (Auth)**, and **Storage** — all part of Supabase's open-source `docker-compose` distribution, run entirely on the user's own infrastructure. No use of Supabase's hosted cloud platform, Realtime, Edge Functions, or any other Supabase-cloud-specific feature.
+| Local AI runtime | Ollama, exactly one pinned analysis model — currently `qwen2.5:14b-instruct-q4_K_M` as the leading candidate, pending real-hardware benchmark validation | Runs one large model, chosen and validated against the real target hardware (see `14-model-evaluation.md`), with no cloud dependency, manually managed by Wassim. Used only for job/CV analysis, never for coding this project. |
+| Background jobs / scheduling | None for the MVP | Search is a user-triggered HTTP request handled sequentially; no scheduler, no message broker, no worker pool (`02-ai-and-matching-architecture.md`). |
+| Containerization | Docker + Docker Compose | Standard, well-understood; the compose file is now small — a backend container (serving the API and the built frontend) plus Ollama, nothing else. |
 
 ## Deployment
 
-- **Development**: everything (Postgres/Auth/Storage via `docker-compose`, Ollama, FastAPI backend with hot reload, Vite dev server) runs on the developer's local machine.
-- **Production**: self-hosted on the user's own machine or a small home/private server, via the same Docker Compose stack, no cloud services required. Ollama can run on the same host (with a capable GPU/CPU) or on another machine on the user's local network, addressed via configuration.
-- No requirement for Kubernetes, a cloud provider account, a managed database, message queues, or any distributed-systems infrastructure — deliberately, since this is a single-user product and that infrastructure would add operational burden with no benefit.
+- **Development**: SQLite file on disk, Ollama, FastAPI backend with hot reload, and the Vite dev server all run on the developer's local machine — no other services to start.
+- **Production**: self-hosted on the user's own machine, via the same lightweight Docker Compose stack. Ollama can run on the same host or on another machine on the user's local network, addressed via configuration.
+- No requirement for Kubernetes, a cloud provider account, a managed database, a message queue, or any distributed-systems infrastructure.
 
 ```mermaid
 flowchart TB
     subgraph Host["Self-hosted host (Docker Compose)"]
-        FE["Frontend (static build, served via nginx or FastAPI)"]
+        FE["Frontend (static build, served by the backend)"]
         BE["Backend (FastAPI)"]
-        PG[("PostgreSQL")]
-        AUTH["GoTrue (Auth)"]
-        STOR["Storage"]
-        SCHED["Scheduler (in-process, part of Backend)"]
+        DB[("SQLite file")]
     end
     subgraph AIHost["Local AI host (same machine or LAN)"]
         OLLAMA["Ollama + configured analysis model"]
     end
-    BE --> PG
-    BE --> AUTH
-    BE --> STOR
+    BE --> DB
     BE --> OLLAMA
     FE --> BE
 ```

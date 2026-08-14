@@ -4,39 +4,34 @@ Testing is designed before implementation and organized around the same layers a
 
 ## Test categories
 
-- **Unit tests**: canonical job model validation, normalization mapping, deduplication key logic, matching sub-score calculations, AI schema validation, evidence-verification claim checking, configuration loading.
-- **Integration tests**: DB persistence round-trips, local Ollama call + response handling (against a real local Ollama instance in CI where available, else a recorded-fixture double), Adzuna adapter against fixture pages/API responses, end-to-end orchestrator run against fixtures, evidence recording.
-- **Adzuna connector tests**: authentication, rate limits/quota handling, pagination, malformed responses, missing job fields — all run against saved fixture API responses so tests don't depend on the live third-party service; a small, explicitly-labeled live-smoke check (run manually / on a schedule, never blocking normal CI) exercises the real API to catch drift early, always kept clearly distinguished from fixture-based "proof."
+- **Unit tests**: canonical job model validation, normalization mapping, deduplication key logic, deterministic pre-filter checks, AI schema validation, the evidence-verification containment check, configuration loading.
+- **Integration tests**: SQLite persistence round-trips, a local Ollama call + response handling (against a real local Ollama instance in CI where available, else a recorded-fixture double), Adzuna adapter against fixture pages/API responses, end-to-end `POST /jobs/search` run against fixtures.
+- **Adzuna connector tests**: authentication, rate limits/quota handling, pagination, malformed responses, missing job fields — run against saved fixture API responses so tests don't depend on the live third-party service; a small, explicitly-labeled live-smoke check (run manually, never blocking normal CI) exercises the real API to catch drift early.
 - **Normalization & deduplication tests**: missing-field handling, duplicate-from-different-pages, malformed source data, near-duplicate titles that must *not* be merged (different roles at the same company).
-- **Deterministic pre-filter tests**: title/keyword exclusion, skill-floor threshold, location/remote incompatibility, salary-floor rejection — each verified independently of the AI stage.
-- **CV/matching tests**: deterministic sub-score calculations across all considered factors (skills, networking/cybersecurity/sysadmin experience, work experience, education, certifications, languages, role fit, location, remote/hybrid/on-site, employment type, experience level, salary).
-- **AI schema tests**: valid responses accepted; missing required fields, wrong types, and extra fields all rejected; ambiguous/low-confidence responses correctly routed to `UNKNOWN`.
-- **Hallucination / evidence tests**: fixture jobs and fixture CVs paired with known-correct expected extractions; assert the AI analysis never introduces a skill, certification, work-history entry, education credential, language, salary, or requirement absent from the fixture text, and that any such attempt is caught by verification and downgraded/rejected rather than shown as fact. Includes the canonical cases: a demonstrated skill scored as `matching_skills`/`FACT`, and an undemonstrated required skill correctly scored `missing_requirements` or `unknown_requirements`, never invented as a match.
-- **Untrusted-input handling test (kept simple, not a dedicated suite)**: a handful of fixture job postings containing embedded text that reads like an instruction (e.g. "ignore previous instructions," "contact HR directly") assert no behavioral change results — output is still schema-valid and still evidence-checked. This is a small sanity check, not a large adversarial security test suite, consistent with the project's explicit choice not to build a dedicated prompt-injection subsystem.
-- **Authorization tests**: user A cannot read, list, or mutate user B's profile, jobs, resumes, or saved jobs, through either the API layer or a direct-DB path exercising RLS.
-- **Database tests**: constraint enforcement, RLS policy tests (per table, per CRUD verb), migration correctness.
-- **Ollama-unavailable / model-missing tests**: assert the system reports an explicit degraded state (`AI_UNAVAILABLE`, naming the configured model and whether it's installed) rather than silently failing or fabricating output, and never auto-pulls or substitutes a different model.
+- **Deterministic pre-filter tests**: location, salary, employment type, experience level, excluded keywords, required skills — each verified independently of the AI stage, against the fixed set of checks (not a weighted scoring system).
+- **AI schema tests**: valid responses accepted; missing required fields, wrong types, and extra fields all rejected and trigger the single retry; a still-invalid response after retry is marked `AI_UNAVAILABLE`.
+- **Evidence tests**: fixture jobs and fixture CVs paired with known-correct expected extractions; assert the AI analysis never introduces a skill, certification, work-history entry, education credential, language, salary, or requirement absent from the compact context actually sent to the model, and that any such attempt is caught by the containment check and downgraded to `UNKNOWN`/`NOT_DEMONSTRATED` rather than shown as fact. Includes the canonical cases: a demonstrated skill scored as `matching_skills`, and an undemonstrated required skill correctly scored `missing_requirements` or `unknown_requirements`, never invented as a match.
+- **Untrusted-input handling test (kept simple, not a dedicated suite)**: a handful of fixture job postings containing embedded text that reads like an instruction (e.g. "ignore previous instructions") assert no behavioral change results — output is still schema-valid and still evidence-checked. This is a small sanity check, not a large adversarial security test suite.
+- **Database tests**: SQLite constraint enforcement, migration correctness against a fresh file.
+- **Ollama-unavailable / model-missing tests**: assert the system reports an explicit `AI_UNAVAILABLE`/"model not installed" state (naming the configured model) rather than silently failing or fabricating output, and never auto-pulls or substitutes a different model.
 - **Regression tests**: once a real bug is found and fixed, a regression test is added from that exact real-world evidence before the fix is considered complete.
 
 ## Explicit adversarial/edge cases
 
 | Case | Expected behavior |
 |---|---|
-| AI invents a skill, certification, or work-history entry not in the CV | Verification finds no supporting text, claim rejected/downgraded to `UNKNOWN` |
-| AI invents a salary | Same as above |
-| AI invents remote status | Same as above |
-| AI invents a job requirement not present in the Adzuna description | Same as above |
+| AI invents a skill, certification, or work-history entry not in the CV | Evidence check finds no matching text in the supplied context, claim downgraded to `UNKNOWN`/`NOT_DEMONSTRATED` |
+| AI invents a salary, remote status, or requirement not present in the job data sent | Same as above |
 | Job description contains text resembling an instruction | No behavioral deviation; still schema-valid, still evidence-checked output only |
-| Duplicate jobs from the same source | Merged into one job record with multiple evidence entries, not duplicated |
-| Missing salary | Field stored as null, shown as "not specified" — never defaulted to a guessed value |
-| Missing location | Same treatment |
-| Adzuna field conflicts with an AI claim (e.g. AI states a different salary than Adzuna's `salary_min`/`salary_max`) | Adzuna's field wins; the AI's claim is rejected, never shown at equal confidence (`03-job-sources.md`, "Adzuna wins") |
-| Adzuna daily quota exhausted mid-run | Discovery stops cleanly, run marked quota-exhausted (not a generic error), no partial/corrupt job records, user notified |
-| Adzuna returns a malformed/incomplete job record | Normalization stores what's present, nulls the rest, never invents a value; job still gets evidence-recorded |
-| Configured Ollama analysis model is missing locally | System reports "Required Ollama model is not installed," names the exact configured model tag and the exact `ollama pull` command; never auto-pulls, never substitutes a different installed model |
-| Attempt to queue more than the configured LLM concurrency ceiling at once | Excess requests queue (FIFO, deterministic-score tiebreak) rather than firing in parallel against Ollama |
-| Job fails the cheap deterministic pre-filter | Never dequeued for AI analysis at all; stored with `passed_prefilter=false`, visible in the low-priority view only |
-| User attempts to access another user's data | 403/blocked at both the API-authorization layer and RLS |
+| Duplicate jobs from the same source | Merged into one job row, not duplicated |
+| Missing salary or location | Field stored as null, shown as "not specified" — never defaulted to a guessed value |
+| Adzuna field conflicts with an AI claim (e.g. AI states a different salary than `salary_min`/`salary_max`) | Adzuna's field wins; the AI's claim is discarded (`03-job-sources.md`, "Adzuna wins") |
+| Adzuna daily quota exhausted mid-search | Search stops cleanly, marked quota-exhausted (not a generic error), no partial/corrupt job rows, user notified |
+| Adzuna returns a malformed/incomplete job record | Normalization stores what's present, nulls the rest, never invents a value |
+| Configured Ollama analysis model is missing locally | System reports "Required Ollama model is not installed," names the exact configured model tag and the exact `ollama pull` command; never auto-pulls, never substitutes |
+| Model response is malformed | One retry; if the retry is also malformed, that job is marked `AI_UNAVAILABLE` and the pre-filter result is still shown |
+| Job fails the cheap deterministic pre-filter | Never sent to Ollama at all; stored with `passed_prefilter=false`, visible in the low-priority view only |
+| A search is triggered while a previous search's analysis loop is still running | The second request either waits or is rejected with a clear "a search is already in progress" message — there is never more than one Ollama request in flight |
 
 ## What "passing" means
 

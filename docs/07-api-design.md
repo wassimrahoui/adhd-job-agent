@@ -1,35 +1,32 @@
 # API Design
 
-FastAPI, JSON over HTTPS, JWT bearer auth (the Supabase-issued JWT, verified by backend middleware on every request). REST-shaped, resource-oriented; no GraphQL layer (unnecessary complexity for a single client app with well-known query shapes).
+FastAPI, JSON over HTTP. No auth layer for the MVP — single local user, no login (`01-architecture-overview.md`). REST-shaped, resource-oriented; no GraphQL layer (unnecessary complexity for a single client app with well-known query shapes).
 
 ## Conventions
 
-- All endpoints scoped to the authenticated user implicitly — no user ID is ever accepted as a client-supplied parameter for "whose data to return"; it always comes from the verified JWT.
-- Every response includes enough evidence/provenance references (not full payloads) for the frontend to link back to `job_evidence`/`ai_analyses` without a second round trip being required to know *that* evidence exists.
+- There is exactly one profile; endpoints don't take a user ID.
 - Errors are structured (`error_code`, `message`, no stack traces).
 
-## Surface (representative, not exhaustive)
+## Surface — the complete MVP API
 
 | Method & Path | Purpose |
 |---|---|
-| `POST /auth/session` | Exchange Supabase auth result for backend session context (first-request bootstrap). |
-| `GET /profile` / `PUT /profile` | Read/update user profile and matching preferences. |
-| `POST /resumes` / `GET /resumes` / `PUT /resumes/{id}/activate` | Manage resume uploads and active resume. |
-| `POST /discovery/run` | Trigger an on-demand Adzuna discovery run (in addition to the scheduled cadence). Adzuna is the sole source; there is no multi-source configuration endpoint. |
-| `GET /jobs?min_score=&passed_prefilter=` | List jobs, filterable by score and pre-filter outcome. |
-| `GET /jobs/{id}` | Full job detail: canonical fields (from Adzuna), deterministic match breakdown, latest AI analysis with per-claim FACT/INFERENCE/UNKNOWN labels, evidence references, original `redirect_url`. |
-| `GET /jobs/{id}/evidence` | Raw evidence record(s) for a job. |
-| `POST /jobs/{id}/save` | Bookmark a job into `saved_jobs`. |
-| `DELETE /jobs/{id}/save` | Remove a bookmark. |
-| `GET /saved-jobs` | List bookmarked jobs. |
-| `POST /jobs/{id}/reanalyze` | Force a fresh AI analysis (e.g. after a profile change). |
-| `GET /system/ai-status` | Ollama connectivity + whether the exact configured analysis-model tag (`14-model-evaluation.md`) is present locally, for the honest "AI unavailable" / "required model not installed" UI state — never auto-triggers a pull. |
-| `GET /system/adzuna-status` | Remaining daily Adzuna quota / last successful discovery run, for the honest "discovery unavailable today" UI state. |
-| `GET /audit-logs?entity=&id=` | Read-only audit trail for a given entity, for transparency/debugging. |
+| `GET /health` | Liveness/readiness check. |
+| `GET /profile` / `PUT /profile` | Read/update the single user profile, CV content, and preferences. |
+| `POST /jobs/search` | Trigger the full pipeline: Adzuna search → normalize → dedup → deterministic pre-filter → Ollama analysis (sequential) → stored results. This is what the "Search Jobs" button calls. |
+| `GET /jobs` | List jobs from the most recent search, with score/recommendation, sorted by score. |
+| `GET /jobs/{id}` | Full job detail: original job information, matching skills, matching experience, missing requirements, unknown requirements, evidence, explanation, score, original `redirect_url`. |
+| `POST /jobs/{id}/analyze` | Re-run AI analysis for a single job (e.g. after a profile change). |
+| `GET /system/ollama-status` | Ollama connectivity + whether the exact configured analysis-model tag is installed locally — never triggers a pull. |
+
+That's the whole surface. Nothing here is designed for a hypothetical future feature.
 
 ## What the API deliberately does not expose
 
-- No endpoint accepts a raw prompt or lets the frontend call the analysis model directly — all AI orchestration, context-building, and verification happens server-side.
-- No endpoint performs, prepares, or assists an application submission of any kind — there is no `/applications` resource, no `/assist-me` endpoint, no form-filling endpoint, no browser-automation trigger. The API's involvement with a job ends at surfacing its data and its original `redirect_url`; the user leaves the app to apply.
-- No email endpoints of any kind — this project does not read, classify, or act on a mailbox.
-- No `/notifications` resource beyond what `GET /jobs?min_score=` already gives the frontend to build its own "what's new" view — there is no separate always-on inbox to manage.
+- No `/auth` or `/session` endpoint — there's no login for the MVP.
+- No `/applications`, `/assist-me`, form-filling, or browser-automation endpoint of any kind. The API's involvement with a job ends at surfacing its data and its original `redirect_url`.
+- No email endpoints of any kind.
+- No `/saved-jobs` endpoint for the MVP — see `06-database-design.md` and `05-adhd-ux.md` for why the bookmark feature isn't built yet.
+- No scheduler-management endpoint — search is user-triggered only.
+- No model-download or model-switching endpoint — the model is pinned in configuration and installed manually by the user (`14-model-evaluation.md`).
+- No multi-agent/coordinator endpoint of any kind.
