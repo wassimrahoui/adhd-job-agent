@@ -5,15 +5,15 @@
 Adzuna is the job search engine. The system as a whole (orchestration code plus the LLM comparison step) drives the discovery-to-relevance pipeline, but every job *fact* comes from one place:
 
 ```
-User search preferences (profile)
+User clicks "Search Jobs" (explicit action, no scheduler)
   -> Deterministic search criteria built from the profile
   -> Adzuna API (sole job-data source)
   -> Retrieved jobs (Adzuna's structured fields + snippet, stored as evidence)
   -> Normalize -> Deduplicate
   -> Cheap deterministic pre-filter
-  -> Large local Ollama analysis model compares each remaining job against the user's CV/profile
+  -> Local Ollama analysis model compares each remaining job against the user's CV/profile, one at a time
   -> Relevance score + evidence-based explanation
-  -> Configurable relevance threshold cutoff
+  -> Relevance threshold cutoff
   -> Relevant jobs shown to the user, each with its original application link
 ```
 
@@ -30,12 +30,12 @@ Adzuna (`developer.adzuna.com`) is a job-search aggregator with a public REST AP
 - **Search endpoint**: country-scoped (e.g. `/v1/api/jobs/{country}/search/{page}`), accepting parameters for keywords, location, salary bounds, category, contract type, and sort order — every deterministic filter this system needs is expressible as an Adzuna query parameter.
 - **Fields preserved from Adzuna, per job**: Adzuna's own `id`, `title`, `company`, `location` (structured `area` array + `display_name`), `description` (a snippet — often truncated, not always the full original posting), `salary_min`, `salary_max`, `salary_is_predicted` (Adzuna sometimes estimates rather than states salary — this flag must be surfaced, never silently dropped), `contract_type`/employment info when available, `category`, `created` (posting date), `redirect_url` (the canonical link to the original posting/application page — the link the user manually applies through), and basic source metadata (which API call produced this record, when). Wherever Adzuna does not provide a field, it is stored as `UNKNOWN`/null — never invented.
 - **Other endpoints** (`/histogram`, `/history`, `/top_companies`, `/geodata`, `/categories`) exist for market-analytics use cases; none are required for MVP.
-- **Rate limits**: Adzuna's developer tier enforces a daily request quota tied to the registered application. The connector treats this quota as configuration, respects it, backs off and queues rather than retrying aggressively, and surfaces "Adzuna quota exhausted for today" as an explicit, visible state.
+- **Rate limits**: Adzuna's developer tier enforces a daily request quota tied to the registered application. The connector treats this quota as configuration, respects it, and if exhausted mid-search simply stops and surfaces "Adzuna quota exhausted for today" as an explicit, visible state to the user — no retry queue, since a search is a single user-triggered request, not a background job.
 - **`description` is a snippet, not always the full posting.** The connector stores exactly what Adzuna returns as evidence. It does not scrape `redirect_url` to fetch the full original page.
 
 ## Adzuna wins: structured source data is authoritative over any AI claim
 
-Wherever Adzuna provides a structured field — `salary_min`/`salary_max`, `location`, `contract_type`, `company`, `created`, `redirect_url` — that field is authoritative, full stop. If the analysis model's output states or implies something different, the deterministic layer's value wins and the model's conflicting claim is discarded before it ever reaches the user. This is checked mechanically in the Evidence & Verification Layer (`02-ai-and-matching-architecture.md`).
+Wherever Adzuna provides a structured field — `salary_min`/`salary_max`, `location`, `contract_type`, `company`, `created`, `redirect_url` — that field is authoritative, full stop. If the analysis model's output states or implies something different, the deterministic layer's value wins and the model's conflicting claim is discarded before it ever reaches the user. This is checked mechanically in the evidence verification step (`02-ai-and-matching-architecture.md`).
 
 ## Source abstraction, retained for future extensibility — but Adzuna is the only implemented adapter
 
@@ -45,23 +45,22 @@ The system still defines a `JobSourceAdapter` interface (`discover()` → candid
 
 ```mermaid
 flowchart TD
-    SCHED["Scheduler / on-demand trigger"] --> QUERYBUILD["Build Adzuna query params from profile\n(deterministic code)"]
+    CLICK["User clicks 'Search Jobs'"] --> QUERYBUILD["Build Adzuna query params from profile\n(deterministic code)"]
     QUERYBUILD --> CALL["Call Adzuna Search API (paged)"]
-    CALL -->|quota exhausted| QUOTA["Record quota-exhausted state,\nnotify user, stop for today"]
-    CALL -->|success| PARSE["Parse response into RawJobRecord per job"]
-    PARSE --> EVIDSTORE["Store evidence (job_evidence)"]
-    PARSE --> NORM["Normalize -> CanonicalJob"]
+    CALL -->|quota exhausted| QUOTA["Stop, surface 'quota exhausted for today'"]
+    CALL -->|success| PARSE["Parse response into a raw record per job"]
+    PARSE --> NORM["Normalize into the canonical job schema,\nwith Adzuna's fields kept as evidence on the same row"]
     NORM --> DEDUP{"Duplicate of\nexisting job (by Adzuna id, then\nredirect_url, then composite key)?"}
-    DEDUP -->|yes| MERGE["Attach as additional evidence\non existing job, no new row"]
+    DEDUP -->|yes| MERGE["Update the existing job row,\nno new row"]
     DEDUP -->|no| INSERT["Insert new job row"]
     MERGE --> FILTER["Cheap deterministic pre-filter"]
     INSERT --> FILTER
-    FILTER -->|fails hard filters| NOMATCH["Marked low/no relevance,\nnever queued for AI analysis"]
-    FILTER -->|passes| QUEUEIT["Queued for AI relevance analysis\n(low-concurrency queue) -- see 02-ai-and-matching-architecture.md"]
+    FILTER -->|fails| NOMATCH["Marked not a match,\nnever sent to Ollama"]
+    FILTER -->|passes| ANALYZE["Analyzed by Ollama, one job at a time\n-- see 02-ai-and-matching-architecture.md"]
 ```
 
 - **Deduplication identity order**: (1) Adzuna's own `id`, (2) `redirect_url` (normalized), (3) a documented deterministic fallback composite key (normalized title + company + location). Same inputs always produce the same dedup decision — deterministic code, never LLM-judged.
-- **The deterministic pre-filter runs before dedup's output is queued for AI analysis at all** — see `02-ai-and-matching-architecture.md` for exactly what it checks and why it exists (protecting the shared GPU/RAM budget, not just cost).
+- **The deterministic pre-filter runs before a job is ever sent to Ollama** — see `02-ai-and-matching-architecture.md` for exactly what it checks and why it exists (protecting the shared GPU/RAM budget, not just cost).
 
 ## Where the system's involvement ends
 

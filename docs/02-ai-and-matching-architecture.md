@@ -1,179 +1,141 @@
-# AI Architecture, Matching, and Hallucination Control
+# AI Architecture and Matching (Simplified)
 
-## Conceptual pipeline
+This document replaces an earlier, more elaborate version of this architecture (a six-layer hallucination-defense system and a configurable matching-weight framework). Both were simplified away deliberately: they added process and surface area without adding matching quality. What follows is the whole pipeline.
+
+## The pipeline
+
+```
+Job data + relevant CV/profile data
+        |
+        v
+Local Ollama model
+        |
+        v
+Structured JSON response
+        |
+        v
+Schema validation
+        |
+        v
+Simple evidence verification
+        |
+        v
+Final score + explanation
+```
 
 ```mermaid
 flowchart TD
     RAW["Raw job (Adzuna)"] --> NORMALIZE["Normalize into canonical job schema"]
-    NORMALIZE --> STORE["Store canonical job + evidence"]
-    STORE --> PROFILE["Retrieve user profile"]
-    PROFILE --> DETMATCH["Deterministic matching"]
-    DETMATCH --> PREFILTER{"Passes cheap\ndeterministic pre-filter?"}
-    PREFILTER -->|no| SKIP["Never sent to the analysis model.\nStored as low/no match."]
-    PREFILTER -->|yes| QUEUE["Enter bounded, low-concurrency\nanalysis queue"]
-    QUEUE --> CONTEXT["Build verified-facts context for the model\n(Adzuna structured fields + snippet + CV)"]
-    CONTEXT --> LLM["Analysis model call (local Ollama, one job at a time)"]
+    NORMALIZE --> STORE["Store job + its evidence"]
+    STORE --> PREFILTER{"Passes cheap\ndeterministic pre-filter?"}
+    PREFILTER -->|no| SKIP["Never sent to Ollama.\nStored as not a match."]
+    PREFILTER -->|yes| CONTEXT["Build compact job + CV context"]
+    CONTEXT --> LLM["Ollama call (one job at a time)"]
     LLM --> SCHEMA["Schema validation"]
-    SCHEMA -->|invalid| REJECT["Reject / retry once / mark AI_UNAVAILABLE"]
-    SCHEMA -->|valid| VERIFY["Evidence verification\n(Adzuna fields win over any conflicting claim)"]
-    VERIFY --> LABEL["Label every claim FACT / INFERENCE / UNKNOWN"]
-    LABEL --> FINAL["Final recommendation\n(score + matching_skills + matching_experience +\nmissing_requirements + unknown_requirements + explanation)"]
-    FINAL --> THRESHOLD{"Relevance score meets the\nconfigurable threshold?"}
-    THRESHOLD -->|no| LOWPRI["Stored, visible only in the\nlow-priority / 'not a match' view"]
-    THRESHOLD -->|yes| REVIEW["Shown to the user as a relevant match,\nwith the original application link"]
+    SCHEMA -->|invalid| RETRY["Retry once"]
+    RETRY -->|still invalid| REJECT["Mark AI_UNAVAILABLE for this job"]
+    SCHEMA -->|valid| VERIFY["Evidence verification\n(claim must appear in supplied data)"]
+    VERIFY --> FINAL["Final result: score + recommendation +\nmatching_skills + matching_experience +\nmissing_requirements + unknown_requirements + explanation"]
+    FINAL --> THRESHOLD{"Score meets\nthreshold?"}
+    THRESHOLD -->|no| LOWPRI["Stored, shown only in the low-priority view"]
+    THRESHOLD -->|yes| REVIEW["Shown to the user as a relevant match"]
 ```
 
-## A/B/C/D separation
+## Two-stage matching
 
-- **A. Facts** — the immutable source record: Adzuna's structured fields and description snippet, the user's CV/profile as entered. Adzuna's structured fields are the highest tier of fact in this system (see `03-job-sources.md`, "Adzuna wins"). Nothing downstream may alter these.
-- **B. Deterministic calculations** — plain code, no AI: salary range comparison, location/remote compatibility, skill-list intersection, employment-type match, duplicate detection, required-field completeness, the deterministic pre-filter (below), and the numeric deterministic sub-scores that feed the final score.
-- **C. AI interpretation** — semantic judgment where language understanding earns its keep: comparing the job against the user's CV/profile, transferable-skill reasoning, summarizing nuanced requirements from the description snippet, flagging concerns, writing the human-readable explanation. The model itself never searches, never queries Adzuna, and never decides what jobs exist; it only ever compares jobs Adzuna already returned against the CV/profile it's given.
-- **D. User decision** — save, dismiss, or open the original application link. The AI's output is always a recommendation, never an action.
+**Stage 1 — code, before Ollama is ever called.** A cheap, pure-code pre-filter checks: location, salary, employment type, experience level, obvious excluded keywords, obvious required skills, and the user's configured job preferences. This is a fixed set of deterministic checks, not a configurable weighting framework — it exists to remove clearly irrelevant jobs cheaply, protecting the GPU/RAM budget on the target hardware (`14-model-evaluation.md`). Jobs that fail are stored but never queued for AI analysis.
 
-**Rule of thumb:** if a normal `if`/comparison/lookup can compute it reliably from Adzuna's structured fields, it is computed in B, not asked of the model.
+**Stage 2 — Ollama, only for jobs that survive Stage 1.** The model evaluates semantic compatibility between the job's requirements and responsibilities and the candidate's CV/profile and preferences. It returns:
 
-## Cheap deterministic pre-filter — before anything reaches the analysis model
+- `score` (0-100)
+- `recommendation`
+- `matching_skills`
+- `matching_experience`
+- `missing_requirements`
+- `unknown_requirements`
+- a concise `explanation`
+- `evidence`
 
-Every job that passes normalization and dedup goes through a fast, pure-code pre-filter *before* it is eligible for AI analysis at all, considering: job title, required keywords, technical skills, location, salary, employment type, remote/hybrid/on-site preference, experience level, and configured exclusions.
+The deterministic stage decides *whether* a job is worth analyzing; the model decides *how well* it matches. Nothing about the deterministic checks is user-configurable per-factor weighting for the MVP — that kind of tunable scoring framework is explicitly not being built until there's a real reason to.
 
-- Hard exclusion keywords present (title/description) → excluded, never queued.
-- Required-skill floor not met (e.g. zero overlap with the profile's required skills) → excluded, never queued.
-- Location/remote-mode incompatible with the profile's acceptance settings → excluded, never queued.
-- Salary (where Adzuna states it, accounting for `salary_is_predicted`) below the profile's stated minimum → excluded, never queued.
-
-Jobs that fail this pre-filter are still stored (visible to the user in a low-priority/"not a match" view if they want to look) but are **never sent to Ollama**. This exists for two reasons at once: it keeps the transparent-score promise honest (a job with zero required skills shouldn't need a large model to tell the user it's not a fit), and — just as importantly given the target hardware (see `14-model-evaluation.md`) — it keeps GPU/RAM load down and avoids unnecessary, expensive LLM calls by only ever running the model on jobs worth the cost.
-
-## Relevance-threshold cutoff — after scoring, before the user ever sees it
-
-Passing the pre-filter and getting an AI analysis does not by itself make a job "relevant" to the user. After the six-layer defense (below) produces a verified `score`, that score is compared against a configurable threshold (a profile-level setting, sensible default provided): jobs at or above the threshold are surfaced in the normal review queues; jobs below it are stored and reachable in a low-priority view, but do not compete for the user's attention on the Home/Today screen or Job Review queue.
-
-## LLM concurrency: low and queued, never parallel-blasted
-
-The AI Analysis Engine processes jobs through a **bounded, low-concurrency queue** — the default and required configuration is **concurrency = 1** (exactly one job in flight against Ollama at a time); a configuration ceiling exists but is not expected to be raised above a small number even on capable hardware, and must never be set high enough to fire many simultaneous requests at Ollama, and the app never automatically loads multiple large models at once. This is a hard architectural rule, not a performance nice-to-have: the target machine (`14-model-evaluation.md`) runs Ollama alongside other active software sharing the same 32GB system RAM and 16GB GPU, and uncontrolled concurrent inference is the single fastest way to exhaust either budget or starve the rest of the machine. The queue is FIFO by default, with the deterministic score used as a tiebreaker so the strongest candidate jobs are analyzed first if the queue backs up.
-
-```mermaid
-flowchart LR
-    Q["Analysis Queue\n(FIFO, deterministic-score tiebreak)"] --> WORKER["Single analysis worker\n(concurrency=1)"]
-    WORKER --> OLLAMA["Ollama\n(one request in flight)"]
-    OLLAMA --> WORKER
-    WORKER --> NEXT["Next job dequeued\nonly after this one completes"]
-```
-
-## Hybrid matching and scoring
-
-```mermaid
-flowchart LR
-    subgraph Deterministic
-        LOC["Location / remote-mode match"]
-        SAL["Salary range overlap (Adzuna fields)"]
-        SKILL["Required skill coverage"]
-        TITLE["Title / seniority compatibility"]
-        TYPE["Employment type match"]
-        EXCL["Exclusion keywords"]
-    end
-    subgraph Semantic["AI semantic layer"]
-        TRANS["Transferable skills"]
-        NUANCE["Nuanced requirement reading (snippet)"]
-        GAPS["Gaps / concerns"]
-        EXPLAIN["Plain-language explanation"]
-    end
-    Deterministic --> DETSCORE["Deterministic sub-score (0-100, weighted)"]
-    DETSCORE --> FINAL["Final transparent score"]
-    Semantic --> FINAL
-    FINAL --> BREAKDOWN["Factor breakdown shown to user\n(never a bare number)"]
-```
-
-The deterministic sub-score is computed first and is never overridden by the AI. The score shown to the user is always accompanied by its factor breakdown. Weighting of deterministic factors is user-configurable in the profile.
-
-## Structured AI output — the exact schema
+## Structured AI output — the schema
 
 Every AI call has a fixed Pydantic contract:
 
 ```json
 {
-  "score": "integer 0-100, the relevance score the threshold cutoff is applied to",
+  "score": "integer 0-100",
   "recommendation": "strong_match | possible_match | weak_match | not_enough_information",
   "confidence": "high | medium | low",
   "matching_skills": [
-    {
-      "claim": "string naming the matched skill and how it applies",
-      "verification_status": "FACT | INFERENCE | UNKNOWN",
-      "source_excerpt": "string quoting the exact CV/profile and/or job text supporting this match, or null if UNKNOWN"
-    }
+    {"claim": "string", "source_excerpt": "string quoting the supplied CV/job text, or null"}
   ],
   "matching_experience": [
-    {
-      "claim": "string naming the matched experience (work history, networking, cybersecurity, sysadmin, education, certifications, etc.) and how it applies",
-      "verification_status": "FACT | INFERENCE | UNKNOWN",
-      "source_excerpt": "string, or null if UNKNOWN"
-    }
+    {"claim": "string", "source_excerpt": "string quoting the supplied CV/job text, or null"}
   ],
   "missing_requirements": [
-    {
-      "claim": "string naming a stated job requirement the CV/profile does not demonstrate",
-      "source_excerpt": "string quoting the job text stating the requirement"
-    }
+    {"claim": "string naming a stated job requirement the CV does not demonstrate", "source_excerpt": "string quoting the job text"}
   ],
   "unknown_requirements": [
-    {
-      "claim": "string naming a stated job requirement for which the CV/profile has no information either way",
-      "source_excerpt": "string quoting the job text stating the requirement"
-    }
+    {"claim": "string naming a stated job requirement the CV says nothing about either way", "source_excerpt": "string quoting the job text"}
   ],
   "explanation": "string, 2-4 sentences, plain language",
   "evidence": [
-    {
-      "claim": "string, any other factual statement (salary, location, remote_status, etc.)",
-      "verification_status": "FACT | INFERENCE | UNKNOWN",
-      "source_excerpt": "string quoting the exact Adzuna field or description snippet text supporting this claim, or null if UNKNOWN"
-    }
+    {"claim": "string, any other factual statement (salary, location, remote_status, etc.)", "source_excerpt": "string, or null"}
   ]
 }
 ```
 
-`matching_skills`, `matching_experience`, `missing_requirements`, and `unknown_requirements` are the named categories the UI surfaces directly for every retained job, alongside `score`, `recommendation`, `confidence`, and `explanation`. `evidence` carries any remaining factual claims (e.g. Adzuna-field-derived statements) using the same evidence-item shape, so the FACT/INFERENCE/UNKNOWN discipline applies uniformly across the whole response.
+`missing_requirements` vs. `unknown_requirements`: `missing_requirements` is for a requirement the job clearly states and the CV clearly does **not** demonstrate. `unknown_requirements` is for a requirement the job states but the CV says nothing about either way — genuinely unknown, not a demonstrated gap. Neither is ever silently upgraded into `matching_skills`/`matching_experience`.
 
-**`missing_requirements` vs. `unknown_requirements`:** these are deliberately distinct. `missing_requirements` is for a requirement the job clearly states and the CV/profile clearly does **not** demonstrate (e.g. job requires Kubernetes, CV never mentions it → `missing_requirements`, not a match). `unknown_requirements` is for a requirement the job states but the CV/profile simply doesn't say anything about either way — not a demonstrated gap, just genuinely unknown. Neither is ever silently upgraded into `matching_skills`/`matching_experience`.
+The model must never invent a candidate skill, certification, work-history entry, education credential, language, salary figure, location, or job requirement that isn't actually present in the data it was given. If information doesn't exist in the supplied CV/profile or job data, the correct output is `UNKNOWN`/`NOT_DEMONSTRATED`, never an invented positive.
 
-Every individual claim carries its own `verification_status`:
+## The five protections (and nothing more)
 
-- **`FACT`** — directly stated in an Adzuna structured field or the CV/profile, or located verbatim/near-verbatim in the description snippet, and confirmed by the deterministic verifier (below) against that exact source, not just asserted by the model. `source_excerpt` is mandatory and must be a real substring of the evidence, not a paraphrase. Example: job requires Cisco networking, CV lists "Cisco Catalyst switch administration" → `matching_skills` entry, `FACT`, quoting both.
-- **`INFERENCE`** — a reasonable semantic judgment the model is allowed to make (transferable skills, "this role likely involves X given the description's phrasing") that is not directly stated. Always shown to the user distinctly from `FACT`, always carries a `source_excerpt` showing what it was inferred *from*, and is never used to satisfy a deterministic hard filter.
-- **`UNKNOWN`** — the model correctly identifies that the CV/profile does not demonstrate something the job requires, or that Adzuna's structured fields/snippet don't specify something. `source_excerpt` is `null` where nothing exists to quote. This is a rewarded, correct answer, not a failure. Example: job requires Kubernetes experience, CV doesn't mention it → the model must say `UNKNOWN`/not demonstrated, never "candidate has Kubernetes experience."
+1. **Strict structured output.** The model is only ever asked for the fixed JSON schema above — no free-text-only response is accepted for anything the system will act on or display as fact.
+2. **Schema validation.** Pydantic validation on every response; wrong types, missing required fields, or extra fields cause rejection.
+3. **Evidence must reference the supplied data.** Each `source_excerpt` is checked against the job/CV context that was actually sent to the model for that call — a simple substring/containment check, not a separate verification service. A claim whose excerpt doesn't appear in the supplied data is not shown as supported.
+4. **Unsupported claims become `UNKNOWN` or `NOT_DEMONSTRATED`.** Anything that fails the evidence check is downgraded, never kept at face value.
+5. **Invalid model output is rejected and retried once if appropriate.** A malformed response gets one retry; if the retry also fails, that job's AI analysis is marked `AI_UNAVAILABLE` and the deterministic pre-filter result is still shown — no fabricated "demo" analysis is ever generated (ADR-006).
 
-The model must never fabricate a skill, certification, work-history entry, education credential, language, salary figure, location, or job requirement that isn't actually present in its source data. If information doesn't exist in the CV/profile or in Adzuna's data, the correct output is `UNKNOWN`, never an invented positive.
+That is the complete list. There is no six-layer defense architecture, no dedicated verification module, and no separate claim-by-claim FACT/INFERENCE/UNKNOWN taxonomy beyond what's needed to say "supported" vs. "not supported, so `UNKNOWN`." Job text is treated as data throughout; the model has no tool access and can't take any action, so there's nothing for a manipulated response to trigger even in the worst case (`01-architecture-overview.md`, "Untrusted input, handled simply").
 
-Any claim covering a field Adzuna states structurally (`salary`, `location`, `remote_status` where derivable) is checked directly against that Adzuna field, not the free-text snippet — and if the claim conflicts with Adzuna's value, the claim is rejected outright regardless of its self-reported `verification_status` (per "Adzuna wins," `03-job-sources.md`).
+## Compact context — what actually gets sent to Ollama
 
-## The six-layer defense against hallucination
+Only relevant information is sent, per call, to keep context size, RAM/VRAM usage, and inference time down:
 
-1. **Layer 1 — Minimal, verified context.** The model receives only the normalized job (Adzuna fields + snippet), the relevant CV/profile fields — work experience, technical skills, networking experience, cybersecurity experience, sysadmin experience, education, certifications, languages, desired roles, location/salary/remote preferences, experience level (`00-vision-and-requirements.md` requirement 5) — and the deterministic match results — nothing else, and never other users' or system data. Any field absent from the CV/profile is simply not present in the context; the model is never handed a placeholder or assumed value for it.
-2. **Layer 2 — Structured output required.** Every meaningful AI call returns the fixed schema above. Free-text-only responses are never accepted for anything the system will act on or display as fact.
-3. **Layer 3 — Schema validation.** Pydantic validation on every response; wrong types, missing required fields, or extra hallucinated fields cause outright rejection, not coercion.
-4. **Layer 4 — Evidence verification.** Every claim is checked: Adzuna-structural claims against the Adzuna field directly; CV/profile-derived claims against the stored profile data; snippet-derived claims against the stored description text via deterministic substring/similarity matching (not another LLM call).
-5. **Layer 5 — Reject unsupported claims.** Anything that fails verification is removed or its `verification_status` is force-corrected to `UNKNOWN`/rejected — never silently kept at its self-reported status.
-6. **Layer 6 — FACT / INFERENCE / UNKNOWN labeling in the UI.** Every claim the user sees carries its label visibly. This is the user-facing enforcement of the whole pipeline's honesty.
+- **Candidate profile (compact form)**: target roles, experience (condensed), technical skills, certifications, education, languages, location, salary requirements, work-mode preference. Not sent: database metadata, internal IDs, UI-only fields, or unrelated jobs.
+- **Job data (compact form)**: the current job's normalized title, company, location, salary, employment type, requirements, and description snippet. Not sent: other candidate jobs, Adzuna's raw response envelope, or historical analysis data from previous runs.
 
-```mermaid
-flowchart TD
-    L1["Layer 1: Minimal verified context"] --> L2["Layer 2: Structured output required"]
-    L2 --> L3["Layer 3: Schema validation"]
-    L3 -->|fail| REJECT["Reject response,\nmark AI step failed"]
-    L3 -->|pass| L4["Layer 4: Evidence verification\n(Adzuna fields checked first)"]
-    L4 --> L5["Layer 5: Reject/downgrade unsupported claims"]
-    L5 --> L6["Layer 6: FACT/INFERENCE/UNKNOWN labels in UI"]
+One job is analyzed per call. The model never sees more than one job's data and the profile at a time — this keeps each call's context small and predictable regardless of how many jobs a search returns.
+
+## Sequential processing, not a queue
+
+Jobs that pass the pre-filter are analyzed **one at a time, in a simple loop**:
+
+```
+for each filtered job:
+    prepare relevant job data
+    prepare relevant candidate data
+    send to Ollama
+    validate response
+    verify evidence
+    save result
+    continue
 ```
 
-This layered approach is deliberately kept simple and practical — it is normal input validation and evidence-checking, not a dedicated security framework. Job text is treated as data throughout; the model is never given any tool that could execute a command, modify a file, or take an external action, so there is no action for a manipulated response to trigger even in the worst case (see `01-architecture-overview.md`, "Untrusted input, handled simply").
+There is no queue, no worker pool, and no background job system for the MVP. This is a plain sequential function running as part of handling the user's "Search Jobs" request (or a small background task with the same one-at-a-time behavior, if search results shouldn't block the HTTP request — an implementation detail, not an architectural layer). A queue/background-worker architecture is not built now; it is only introduced later if real performance testing on the target hardware shows the sequential loop is genuinely insufficient.
 
-## Never trust the AI's report that something happened
+Concurrency is fixed at 1: exactly one Ollama request in flight at a time, ever. This is a hard constraint, not a tunable default — see ADR-010 and `14-model-evaluation.md` for why (the target machine's 16GB VRAM and 32GB RAM are shared with other running software).
 
-Carried forward as a permanent architectural law (see ADR-002): if the model says a claim is a `FACT`, the system re-derives/verifies it against Adzuna's fields, the CV/profile, or the snippet before treating it as one. This governs *machine* self-reports; it does not apply to the user's own direct actions (e.g. saving or dismissing a job), which are authoritative by definition.
+## Adzuna wins: structured source data is authoritative over any AI claim
+
+Wherever Adzuna provides a structured field — `salary_min`/`salary_max`, `location`, `contract_type`, `company`, `created`, `redirect_url` — that field is authoritative. If the model's output states or implies something different, the deterministic value wins and the model's conflicting claim is discarded before it reaches the user.
 
 ## Analysis model vs. coding model — two separate roles, never mixed
 
-The **analysis model** is the large local Ollama model the *finished application* uses at runtime to compare jobs against a CV/profile and produce the structured output above. The **coding model** is whatever model a coding agent uses during development to help write or modify this project's own source code. These are completely separate roles with separate selection criteria and are never assumed to be the same model or interchangeable:
+The **analysis model** is the single local Ollama model the *finished application* uses at runtime to compare jobs against a CV/profile. The **coding model** is whatever model a coding agent uses during development to help write or modify this project's own source code. These are completely separate roles, never assumed to be the same model or interchangeable:
 
-- **Runtime**: local Ollama only, for the analysis model. No cloud LLM API, no cloud fallback, no Claude integration of any kind in the product. If Ollama is unreachable or the configured analysis model is missing, AI-dependent fields are marked `AI_UNAVAILABLE` and the deterministic match result is still shown (ADR-006) — no fabricated "demo" analysis is ever generated.
-- **Exactly one analysis model at a time, pinned by exact tag.** The current leading candidate, chosen against the real target hardware and pending real-hardware benchmark validation, is `qwen2.5:14b-instruct-q4_K_M` — see `14-model-evaluation.md` for the selection criteria, the full hardware budget it was chosen against, its candidate status, and the manual-pull/no-auto-download/no-silent-substitution contract. Selection is based on reasoning quality, instruction following, CV/job matching accuracy, structured output reliability, hallucination rate, and the ability to correctly say `UNKNOWN` — never on coding-benchmark performance.
-- **Model adapter layer**: the AI Analysis Engine talks to an internal `LocalModelAdapter` interface (model name/tag, endpoint, prompt templates, and schema per task are configuration, not hard-coded call sites) so a future analysis-model change is a config change, not a code change — but changing the pinned model is still a deliberate, documented decision (see `14-model-evaluation.md`), never an automatic upgrade.
+- **Runtime**: local Ollama only, for the analysis model. No cloud LLM API, no cloud fallback, no Claude integration of any kind in the product. If Ollama is unreachable or the configured analysis model is missing, AI-dependent fields are marked `AI_UNAVAILABLE` and the deterministic pre-filter result is still shown (ADR-006) — no fabricated "demo" analysis is ever generated.
+- **Exactly one analysis model, pinned by exact tag.** No multi-model orchestration, no model routing, no automatic fallback to a different model, no automatic downloads, no automatic updates, and never more than one large model loaded at once. The current leading candidate, pending real-hardware benchmark validation, is `qwen2.5:14b-instruct-q4_K_M` — see `14-model-evaluation.md`.
+- **Model check, not model management.** Before any AI call, the backend checks whether the exact configured tag is installed in the local Ollama instance. If not, it returns a clear error naming the exact model and the exact `ollama pull` command. It never pulls, downloads, or substitutes a model on its own.
