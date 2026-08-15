@@ -16,7 +16,7 @@ class TestOllamaClient:
     def test_client_initialization_defaults(self):
         client = OllamaClient()
         assert client.base_url == "http://localhost:11434"
-        assert client.model == "llama3:70b"
+        assert client.model == "qwen2.5:14b-instruct-q4_K_M"
         assert client.timeout == 120.0
 
     def test_client_initialization_custom(self):
@@ -37,6 +37,7 @@ class TestOllamaClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"response": "Hello, world!"}
         mock_client.post.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         result = await client.generate("Test prompt")
@@ -60,6 +61,7 @@ class TestOllamaClient:
         mock_client = AsyncMock()
         import httpx
         mock_client.post.side_effect = httpx.TimeoutException("Timeout")
+        mock_client.is_closed = False
         client._client = mock_client
 
         with pytest.raises(OllamaTimeoutError):
@@ -145,8 +147,9 @@ class TestOllamaClient:
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {"models": [{"name": "llama3:70b"}]}
+        mock_response.json.return_value = {"models": [{"name": "qwen2.5:14b-instruct-q4_K_M"}]}
         mock_client.get.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         result = await client.health_check()
