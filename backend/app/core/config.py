@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen2.5:14b-instruct-q4_K_M"
     ollama_timeout: int = 120
 
+    # Cloud Scoring (optional - for Phase 5)
+    cloud_scoring_api_key: Optional[str] = None
+    cloud_scoring_base_url: str = "https://api.openai.com/v1"
+    cloud_scoring_model: str = "gpt-4"
+    cloud_scoring_timeout: int = 60
+
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000

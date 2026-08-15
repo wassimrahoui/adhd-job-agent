@@ -45,7 +45,30 @@ CREATE TABLE IF NOT EXISTS jobs (
     posted_at TIMESTAMP,
     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     raw_evidence TEXT, -- JSON object
-    passed_prefilter BOOLEAN DEFAULT 0
+    passed_prefilter BOOLEAN DEFAULT 0,
+    -- Scoring fields
+    score INTEGER CHECK (score >= 0 AND score <= 100),
+    recommendation TEXT,
+    confidence TEXT,
+    skills_score INTEGER CHECK (skills_score >= 0 AND skills_score <= 100),
+    experience_score INTEGER CHECK (experience_score >= 0 AND experience_score <= 100),
+    requirements_score INTEGER CHECK (requirements_score >= 0 AND requirements_score <= 100),
+    location_score INTEGER CHECK (location_score >= 0 AND location_score <= 100),
+    salary_score INTEGER CHECK (salary_score >= 0 AND salary_score <= 100),
+    scored_at TIMESTAMP,
+    scoring_model TEXT,
+    -- Recommendation fields
+    recommendation_category TEXT,
+    recommendation_priority TEXT,
+    recommendation_primary_reason TEXT,
+    recommendation_secondary_reasons TEXT, -- JSON array
+    recommendation_explanation TEXT,
+    recommendation_missing_skills TEXT, -- JSON array
+    recommendation_strengths TEXT, -- JSON array
+    recommendation_concerns TEXT, -- JSON array
+    recommendation_action_items TEXT, -- JSON array
+    recommended_at TIMESTAMP,
+    recommendation_model TEXT
 );
 
 -- Indexes for jobs

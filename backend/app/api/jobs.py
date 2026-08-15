@@ -23,11 +23,12 @@ async def list_jobs(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     passed_prefilter: Optional[bool] = Query(None),
+    sort_by_score: bool = Query(True, description="Sort by score descending"),
 ) -> List[JobListItemSchema]:
     """List jobs from the most recent search, with score/recommendation, sorted by score."""
     jobs = await repo.list_jobs(limit=limit, offset=offset, passed_prefilter=passed_prefilter)
     
-    # Enrich with latest analysis data
+    # Enrich with latest analysis data and job's own scoring fields
     result = []
     for job in jobs:
         job_dict = job.model_dump()
@@ -35,10 +36,14 @@ async def list_jobs(
         if latest_analysis:
             job_dict["score"] = latest_analysis.score
             job_dict["recommendation"] = latest_analysis.recommendation.value if latest_analysis.recommendation else None
+            # Also include component scores from analysis if available
+            job_dict["skills_score"] = latest_analysis.matching_skills and len(latest_analysis.matching_skills) > 0 and 100 or 0
+            job_dict["experience_score"] = latest_analysis.matching_experience and len(latest_analysis.matching_experience) > 0 and 100 or 0
         result.append(JobListItemSchema(**job_dict))
     
     # Sort by score descending (None scores last)
-    result.sort(key=lambda x: x.score or -1, reverse=True)
+    if sort_by_score:
+        result.sort(key=lambda x: x.score or -1, reverse=True)
     return result
 
 

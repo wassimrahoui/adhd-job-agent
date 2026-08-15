@@ -98,6 +98,15 @@ class JobRepository:
                 value = json.dumps(value)
             if key in ["raw_evidence"] and isinstance(value, dict):
                 value = json.dumps(value)
+            # Handle recommendation JSON array fields
+            if key in [
+                "recommendation_secondary_reasons",
+                "recommendation_missing_skills",
+                "recommendation_strengths",
+                "recommendation_concerns",
+                "recommendation_action_items"
+            ] and isinstance(value, list):
+                value = json.dumps(value)
             update_fields.append(f"{key} = ?")
             params.append(value)
         
@@ -134,6 +143,57 @@ class JobRepository:
         )
         return [self._row_to_job(row) for row in rows]
 
+    async def update_scoring(self, job_id: int, scoring_data: dict) -> Optional[Job]:
+        """Update scoring fields for a job."""
+        existing = await self.get_job(job_id)
+        if not existing:
+            return None
+        
+        update_fields = []
+        params = []
+        
+        for key, value in scoring_data.items():
+            update_fields.append(f"{key} = ?")
+            params.append(value)
+        
+        if update_fields:
+            params.append(job_id)
+            query = f"UPDATE jobs SET {', '.join(update_fields)} WHERE id = ?"
+            await self.db.execute(query, tuple(params))
+            await self.db._pool.commit()  # type: ignore[union-attr]
+        
+        return await self.get_job(job_id)
+
+    async def update_recommendation(self, job_id: int, recommendation_data: dict) -> Optional[Job]:
+        """Update recommendation fields for a job."""
+        existing = await self.get_job(job_id)
+        if not existing:
+            return None
+        
+        update_fields = []
+        params = []
+        
+        for key, value in recommendation_data.items():
+            # Serialize JSON array fields
+            if key in [
+                "recommendation_secondary_reasons",
+                "recommendation_missing_skills",
+                "recommendation_strengths",
+                "recommendation_concerns",
+                "recommendation_action_items"
+            ] and isinstance(value, list):
+                value = json.dumps(value)
+            update_fields.append(f"{key} = ?")
+            params.append(value)
+        
+        if update_fields:
+            params.append(job_id)
+            query = f"UPDATE jobs SET {', '.join(update_fields)} WHERE id = ?"
+            await self.db.execute(query, tuple(params))
+            await self.db._pool.commit()  # type: ignore[union-attr]
+        
+        return await self.get_job(job_id)
+
     def _row_to_job(self, row) -> Job:
         """Convert database row to Job model."""
         data = dict(row)
@@ -155,6 +215,23 @@ class JobRepository:
                 data["raw_evidence"] = {}
         else:
             data["raw_evidence"] = {}
+        
+        # Parse recommendation JSON array fields - they may be NULL or empty string in DB
+        for key in [
+            "recommendation_secondary_reasons",
+            "recommendation_missing_skills",
+            "recommendation_strengths",
+            "recommendation_concerns",
+            "recommendation_action_items"
+        ]:
+            val = data.get(key)
+            if val and isinstance(val, str) and val.strip():
+                try:
+                    data[key] = json.dumps(json.loads(val))  # re-serialize to ensure valid JSON
+                except json.JSONDecodeError:
+                    data[key] = "[]"
+            else:
+                data[key] = "[]"
         
         return Job(**data)
 

@@ -69,6 +69,13 @@ class JobListItemSchema(BaseModel):
     passed_prefilter: bool
     score: Optional[int] = None
     recommendation: Optional[str] = None
+    # Recommendation fields
+    recommendation_category: Optional[str] = None
+    recommendation_priority: Optional[str] = None
+    recommendation_primary_reason: Optional[str] = None
+    recommendation_explanation: Optional[str] = None
+    recommended_at: Optional[datetime] = None
+    recommendation_model: Optional[str] = None
 
 
 class JobDetailSchema(BaseModel):
@@ -94,3 +101,15 @@ class JobDetailSchema(BaseModel):
     raw_evidence: Dict[str, Any] = Field(default_factory=dict)
     passed_prefilter: bool
     analysis: Optional[AIAnalysisResponseSchema] = None
+    # Recommendation fields
+    recommendation_category: Optional[str] = None
+    recommendation_priority: Optional[str] = None
+    recommendation_primary_reason: Optional[str] = None
+    recommendation_secondary_reasons: Optional[str] = None
+    recommendation_explanation: Optional[str] = None
+    recommendation_missing_skills: Optional[str] = None
+    recommendation_strengths: Optional[str] = None
+    recommendation_concerns: Optional[str] = None
+    recommendation_action_items: Optional[str] = None
+    recommended_at: Optional[datetime] = None
+    recommendation_model: Optional[str] = None

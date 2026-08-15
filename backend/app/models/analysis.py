@@ -10,6 +10,8 @@ class AnalysisStatus(str, Enum):
     SUCCESS = "success"
     REJECTED = "rejected"
     AI_UNAVAILABLE = "ai_unavailable"
+    FAILED = "failed"
+    PENDING = "pending"
 
 
 class Recommendation(str, Enum):

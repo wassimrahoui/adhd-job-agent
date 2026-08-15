@@ -792,7 +792,7 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 * **Difficulty**: EASY
 * **Dependencies**: T4.1.2
 * **Objective**: Parse model output into validated schema.
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 3 — Logic
 
@@ -801,21 +801,21 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 * **Difficulty**: EASY
 * **Dependencies**: T4.2.1
 * **Objective**: Extract relevant evidence from job/profile data.
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.3.2: Implement analysis request construction
 
 * **Difficulty**: EASY
 * **Dependencies**: T4.2.1, T4.3.1
 * **Objective**: Construct complete model request.
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.3.3: Implement invalid-output handling
 
 * **Difficulty**: EASY
 * **Dependencies**: T4.2.3
 * **Objective**: Safely handle malformed LLM responses.
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 4 — Integration
 
@@ -823,36 +823,36 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 
 * **Difficulty**: EASY
 * **Dependencies**: T4.2.2, T4.3.2
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.4.2: Persist AI analysis
 
 * **Difficulty**: EASY
 * **Dependencies**: T4.2.3, T4.4.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.4.3: Connect analysis to filtered jobs
 
 * **Difficulty**: EASY
 * **Dependencies**: T3.4.1, T4.4.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 5 — Verification
 
 ### T4.5.1: Test prompt construction
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.5.2: Test structured model parsing
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.5.3: Test analysis pipeline
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ---
 
@@ -868,19 +868,19 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: Phase 4
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.1.2: Define scoring output
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.1.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.1.3: Define scoring scale and thresholds
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 2 — Component
 
@@ -888,19 +888,19 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.1.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.2.2: Create cloud LLM scoring client
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.1.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.2.3: Create scoring response validator
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 3 — Logic
 
@@ -908,25 +908,25 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.2.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.3.2: Implement experience scoring
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.2.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.3.3: Implement requirements scoring
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.2.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.3.4: Implement evidence-based final score
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.3.1, T5.3.2, T5.3.3
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 4 — Integration
 
@@ -934,37 +934,37 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.2.2, T5.3.4
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.4.2: Persist score
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.2.3, T5.4.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.4.3: Connect score to job API
 
 * **Difficulty**: EASY
 * **Dependencies**: T5.4.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 5 — Verification
 
 ### T5.5.1: Score validation tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.5.2: Hallucination-resistance tests
 
 * **Difficulty**: EASY
 * **Objective**: Ensure missing information becomes UNKNOWN rather than invented.
-* **Status**: TODO
+* **Status**: DONE
 
 ### T5.5.3: Full scoring integration tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ---
 
@@ -976,19 +976,19 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: Phase 5
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.1.2: Define recommendation schema
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.1.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.1.3: Define recommendation thresholds
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 2 — Component
 
@@ -996,19 +996,19 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.2.2: Create explanation generator
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.2.3: Create evidence formatter
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 3 — Logic
 
@@ -1016,13 +1016,13 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.2.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.3.2: Implement confidence handling
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.2.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.3.3: Implement missing/unknown requirement handling
 
@@ -1036,19 +1036,19 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.3.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.4.2: Persist recommendation
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.4.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.4.3: Expose recommendation through API
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.4.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 5 — Verification
 

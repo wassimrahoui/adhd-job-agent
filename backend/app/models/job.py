@@ -38,6 +38,29 @@ class JobBase(BaseModel):
     discovered_at: datetime = Field(default_factory=datetime.utcnow, description="When we discovered this job")
     raw_evidence: Dict[str, Any] = Field(default_factory=dict, description="Raw Adzuna response for this job")
     passed_prefilter: bool = Field(default=False, description="Whether job passed deterministic pre-filter")
+    # Scoring fields
+    score: Optional[int] = Field(default=None, ge=0, le=100, description="Match score 0-100")
+    recommendation: Optional[str] = Field(default=None, description="Match recommendation")
+    confidence: Optional[str] = Field(default=None, description="Confidence level")
+    skills_score: Optional[int] = Field(default=None, ge=0, le=100)
+    experience_score: Optional[int] = Field(default=None, ge=0, le=100)
+    requirements_score: Optional[int] = Field(default=None, ge=0, le=100)
+    location_score: Optional[int] = Field(default=None, ge=0, le=100)
+    salary_score: Optional[int] = Field(default=None, ge=0, le=100)
+    scored_at: Optional[datetime] = Field(default=None, description="When job was scored")
+    scoring_model: Optional[str] = Field(default=None, description="Model used for scoring")
+    # Recommendation fields
+    recommendation_category: Optional[str] = Field(default=None, description="Recommendation category")
+    recommendation_priority: Optional[str] = Field(default=None, description="Recommendation priority")
+    recommendation_primary_reason: Optional[str] = Field(default=None, description="Primary reason for recommendation")
+    recommendation_secondary_reasons: Optional[str] = Field(default=None, description="Secondary reasons (JSON array)")
+    recommendation_explanation: Optional[str] = Field(default=None, description="Full explanation")
+    recommendation_missing_skills: Optional[str] = Field(default=None, description="Missing critical skills (JSON array)")
+    recommendation_strengths: Optional[str] = Field(default=None, description="Candidate strengths (JSON array)")
+    recommendation_concerns: Optional[str] = Field(default=None, description="Concerns (JSON array)")
+    recommendation_action_items: Optional[str] = Field(default=None, description="Action items (JSON array)")
+    recommended_at: Optional[datetime] = Field(default=None, description="When recommendation was generated")
+    recommendation_model: Optional[str] = Field(default=None, description="Model used for recommendation")
 
 
 class JobCreate(JobBase):
@@ -61,6 +84,29 @@ class JobUpdate(BaseModel):
     posted_at: Optional[datetime] = None
     raw_evidence: Optional[Dict[str, Any]] = None
     passed_prefilter: Optional[bool] = None
+    # Scoring fields
+    score: Optional[int] = Field(default=None, ge=0, le=100)
+    recommendation: Optional[str] = None
+    confidence: Optional[str] = None
+    skills_score: Optional[int] = Field(default=None, ge=0, le=100)
+    experience_score: Optional[int] = Field(default=None, ge=0, le=100)
+    requirements_score: Optional[int] = Field(default=None, ge=0, le=100)
+    location_score: Optional[int] = Field(default=None, ge=0, le=100)
+    salary_score: Optional[int] = Field(default=None, ge=0, le=100)
+    scored_at: Optional[datetime] = None
+    scoring_model: Optional[str] = None
+    # Recommendation fields
+    recommendation_category: Optional[str] = None
+    recommendation_priority: Optional[str] = None
+    recommendation_primary_reason: Optional[str] = None
+    recommendation_secondary_reasons: Optional[str] = None
+    recommendation_explanation: Optional[str] = None
+    recommendation_missing_skills: Optional[str] = None
+    recommendation_strengths: Optional[str] = None
+    recommendation_concerns: Optional[str] = None
+    recommendation_action_items: Optional[str] = None
+    recommended_at: Optional[datetime] = None
+    recommendation_model: Optional[str] = None
 
 
 class Job(JobBase):
@@ -85,7 +131,25 @@ class JobListItem(BaseModel):
     passed_prefilter: bool
     score: Optional[int] = None
     recommendation: Optional[str] = None
+    confidence: Optional[str] = None
+    skills_score: Optional[int] = None
+    experience_score: Optional[int] = None
+    requirements_score: Optional[int] = None
+    location_score: Optional[int] = None
+    salary_score: Optional[int] = None
+    scored_at: Optional[datetime] = None
+    scoring_model: Optional[str] = None
+    # Recommendation fields
+    recommendation_category: Optional[str] = None
+    recommendation_priority: Optional[str] = None
+    recommendation_primary_reason: Optional[str] = None
+    recommendation_explanation: Optional[str] = None
+    recommended_at: Optional[datetime] = None
+    recommendation_model: Optional[str] = None
+
+
+from app.models.analysis import AIAnalysisResponse
 
 
 class JobDetail(Job):
-    analysis: Optional["AIAnalysisResponse"] = None
+    analysis: Optional[AIAnalysisResponse] = None
