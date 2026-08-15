@@ -75,6 +75,7 @@ class TestOllamaClient:
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
         mock_client.post.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         with pytest.raises(OllamaResponseError):
