@@ -88,9 +88,10 @@ class TestOllamaClient:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "response": '{"model_used": "llama3:70b", "score": 85, "recommendation": "strong_match", "confidence": "high", "matching_skills": [], "matching_experience": [], "missing_requirements": [], "unknown_requirements": [], "explanation": "Good match", "evidence": [], "status": "success"}'
+            "response": '{"model_used": "qwen2.5:14b-instruct-q4_K_M", "score": 85, "recommendation": "strong_match", "confidence": "high", "matching_skills": [], "matching_experience": [], "missing_requirements": [], "unknown_requirements": [], "explanation": "Good match", "evidence": [], "status": "success"}'
         }
         mock_client.post.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         input_data = AnalysisInput(
@@ -135,6 +136,7 @@ class TestOllamaClient:
     async def test_close(self):
         client = OllamaClient()
         mock_client = AsyncMock()
+        mock_client.is_closed = False
         client._client = mock_client
 
         await client.close()
@@ -165,6 +167,7 @@ class TestOllamaClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"models": [{"name": "other-model"}]}
         mock_client.get.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         result = await client.health_check()
