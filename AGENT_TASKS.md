@@ -379,4 +379,4 @@
 - **Test procedure**: Run pytest
 - **Expected result**: Tested search pipeline with fixture-based Adzuna mocks
 - **Commit message**: test: add search integration tests with Adzuna fixtures
-- **Status**: NOT_STARTED
+- **Status**: DONE
