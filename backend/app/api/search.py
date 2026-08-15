@@ -19,6 +19,13 @@ from app.job_sources import (
     _test_adzuna_adapter,
     set_test_adzuna_adapter,
 )
+from app.filters import (
+    run_pre_filter_pipeline,
+    PreFilterInput,
+    PreFilterConfig,
+    PreFilterJobInput,
+    PreFilterProfileInput,
+)
 from app.schemas.search import SearchResponse, SearchErrorResponse
 from app.core.config import settings
 
@@ -83,8 +90,9 @@ async def search_jobs(
     2. Builds Adzuna query parameters from profile
     3. Calls Adzuna API with pagination
     4. Normalizes and deduplicates jobs
-    5. Stores/updates jobs in database
-    6. Returns summary statistics
+    5. Runs deterministic pre-filtering on new jobs
+    6. Stores/updates jobs in database with pre-filter results
+    7. Returns summary statistics
     
     Returns:
         SearchResponse with counts of jobs found, new, updated, and quota status
@@ -109,6 +117,26 @@ async def search_jobs(
     jobs_duplicate = 0
     quota_exhausted = False
     quota_message = None
+    
+    # Build pre-filter input from profile
+    prefilter_profile = PreFilterProfileInput(
+        work_experience=profile.work_experience,
+        technical_skills=profile.technical_skills or [],
+        networking_experience=profile.networking_experience,
+        education=profile.education,
+        certifications=profile.certifications or [],
+        languages=profile.languages or [],
+        desired_roles=profile.desired_roles or [],
+        location_preferences=profile.location_preferences or [],
+        salary_min=profile.salary_min,
+        salary_max=profile.salary_max,
+        salary_currency=profile.salary_currency,
+        remote_preference=profile.remote_preference.value if hasattr(profile.remote_preference, 'value') else profile.remote_preference,
+        experience_level=profile.experience_level.value if hasattr(profile.experience_level, 'value') else profile.experience_level,
+        excluded_keywords=profile.excluded_keywords or [],
+        relevance_threshold=profile.relevance_threshold,
+    )
+    prefilter_config = PreFilterConfig()
     
     try:
         raw_jobs = await adzuna.search_jobs(query_params)
@@ -145,9 +173,36 @@ async def search_jobs(
                         continue
                 
                 # Create new job
-                await job_repo.create_job(job_create)
+                new_job = await job_repo.create_job(job_create)
                 jobs_new += 1
-    
+                
+                # Run pre-filter on new job
+                prefilter_job = PreFilterJobInput(
+                    id=new_job.id,
+                    adzuna_id=new_job.adzuna_id,
+                    title=new_job.title,
+                    company=new_job.company,
+                    location=new_job.location,
+                    work_mode=new_job.work_mode,
+                    employment_type=new_job.employment_type,
+                    salary_min=new_job.salary_min,
+                    salary_max=new_job.salary_max,
+                    salary_currency=new_job.salary_currency,
+                    salary_is_predicted=new_job.salary_is_predicted,
+                    description=new_job.description,
+                    requirements=new_job.requirements,
+                    skills=new_job.skills or [],
+                    redirect_url=new_job.redirect_url,
+                    posted_at=new_job.posted_at,
+                    raw_evidence=new_job.raw_evidence or {},
+                )
+                
+                prefilter_input = PreFilterInput(job=prefilter_job, profile=prefilter_profile)
+                prefilter_result = run_pre_filter_pipeline(prefilter_input, prefilter_config)
+                
+                # Update job with pre-filter result
+                await job_repo.update_prefilter_status(new_job.id, prefilter_result.overall_result == "pass")
+        
     except QuotaExhaustedError as e:
         quota_exhausted = True
         quota_message = str(e)

@@ -115,6 +115,17 @@ class JobRepository:
         await self.db._pool.commit()  # type: ignore[union-attr]
         return result.rowcount > 0
 
+    async def update_prefilter_status(self, job_id: int, passed: bool) -> Optional[Job]:
+        """Update the pre-filter status of a job."""
+        result = await self.db.execute(
+            "UPDATE jobs SET passed_prefilter = ? WHERE id = ?",
+            (1 if passed else 0, job_id)
+        )
+        await self.db._pool.commit()  # type: ignore[union-attr]
+        if result.rowcount == 0:
+            return None
+        return await self.get_job(job_id)
+
     async def get_jobs_by_prefilter(self, passed: bool, limit: int = 100) -> List[Job]:
         """Get jobs filtered by prefilter status."""
         rows = await self.db.fetchall(
