@@ -747,7 +747,7 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 * **Dependencies**: Phase 3
 * **Objective**: Define the exact data supplied to the analysis model.
 * **Acceptance criteria**: Schema validates.
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.1.2: Define analysis output schema
 
@@ -755,7 +755,7 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 * **Dependencies**: T4.1.1
 * **Objective**: Define structured AI analysis output.
 * **Acceptance criteria**: Output can be validated without accepting arbitrary malformed data.
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.1.3: Define analysis status values
 
@@ -763,7 +763,7 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
 * **Dependencies**: T4.1.2
 * **Objective**: Define pending/success/failed states.
 * **Acceptance criteria**: Status values are centralized.
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 2 — Component
 
@@ -777,7 +777,7 @@ The purpose is to prevent the local LLM from receiving an oversized implementati
   * no invented job facts
   * no invented profile facts
   * evidence must remain traceable
-* **Status**: TODO
+* **Status**: DONE
 
 ### T4.2.2: Create Ollama analysis client
 
