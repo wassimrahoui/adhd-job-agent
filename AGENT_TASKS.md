@@ -192,3 +192,191 @@
 - **Expected result**: Passing test suite
 - **Commit message**: test: add unit tests for models, database, and repositories
 - **Status**: DONE
+
+## Phase 2: Job Search (L3)
+
+### Task 2.1: JobSourceAdapter Interface & RawJobRecord Schema (EASY)
+- **Task ID**: T2.1
+- **Task name**: JobSourceAdapter interface and RawJobRecord Pydantic model
+- **Difficulty**: EASY
+- **Objective**: Define the JobSourceAdapter abstract interface and RawJobRecord schema for Adzuna response parsing
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 03-job-sources.md, 06-database-design.md
+- **Source files to read**: backend/app/models/job.py
+- **Files to modify**: backend/app/job_sources/__init__.py, backend/app/job_sources/base.py, backend/app/job_sources/schemas.py
+- **Dependencies**: T1.2, T1.4
+- **Implementation requirements**:
+  - JobSourceAdapter abstract base class with `discover()` and `extract()` methods
+  - RawJobRecord Pydantic model matching Adzuna response fields
+  - Adzuna-specific exception classes (QuotaExhausted, AuthError, APIError)
+  - Type hints for async methods
+- **Acceptance criteria**:
+  - Interface and schemas import without errors
+  - RawJobRecord validates with sample Adzuna response
+- **Test procedure**: Unit tests for schema validation
+- **Expected result**: Job source abstraction layer ready for Adzuna implementation
+- **Commit message**: feat: add JobSourceAdapter interface and RawJobRecord schema
+- **Status**: DONE
+
+### Task 2.2: AdzunaSourceAdapter Implementation (EASY)
+- **Task ID**: T2.2
+- **Task name**: AdzunaSourceAdapter HTTP client with auth and pagination
+- **Difficulty**: EASY
+- **Objective**: Implement AdzunaSourceAdapter with HTTP client, app_id/app_key auth, pagination, and response parsing
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 03-job-sources.md, 10-deployment-and-dev-workflow.md
+- **Source files to read**: backend/app/job_sources/base.py, backend/app/job_sources/schemas.py, backend/app/core/config.py
+- **Files to modify**: backend/app/job_sources/adzuna.py
+- **Dependencies**: T2.1
+- **Implementation requirements**:
+  - AdzunaSourceAdapter class implementing JobSourceAdapter
+  - HTTP client using httpx with timeout and retry logic
+  - app_id/app_key passed as query parameters
+  - Pagination support (page parameter, max pages from config)
+  - Response parsing into list[RawJobRecord]
+  - Quota exhausted detection (429 or specific error response)
+  - Structured error handling per 07-api-design.md
+- **Acceptance criteria**:
+  - Adapter initializes with config
+  - `discover()` returns list of raw job references
+  - `extract()` fetches and parses full job data
+  - Quota exhaustion raises QuotaExhausted exception
+- **Test procedure**: Unit tests with fixture responses (no live API calls)
+- **Expected result**: Working Adzuna adapter ready for search orchestration
+- **Commit message**: feat: add AdzunaSourceAdapter implementation
+- **Status**: DONE
+
+### Task 2.3: Query Parameter Builder from Profile (EASY)
+- **Task ID**: T2.3
+- **Task name**: Build Adzuna query parameters from user profile
+- **Difficulty**: EASY
+- **Objective**: Deterministic function to convert profile preferences into Adzuna search API query parameters
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 03-job-sources.md, 05-adhd-ux.md
+- **Source files to read**: backend/app/models/profile.py, backend/app/job_sources/adzuna.py
+- **Files to modify**: backend/app/job_sources/query_builder.py
+- **Dependencies**: T2.1, T1.6
+- **Implementation requirements**:
+  - Function `build_adzuna_query(profile: Profile) -> dict[str, Any]`
+  - Maps profile.desired_roles → `what` parameter (keywords)
+  - Maps profile.location_preferences → `where` parameter
+  - Maps profile.salary_min → `salary_min` parameter
+  - Maps profile.remote_preference → contract_type/sort parameters
+  - Maps profile.excluded_keywords → exclusion logic (client-side post-filter for MVP)
+  - Only includes non-None/empty values
+  - Returns dict ready for httpx query params
+- **Acceptance criteria**:
+  - Function produces correct query dict for various profile configurations
+  - Empty profile returns minimal defaults
+  - No external dependencies (pure function)
+- **Test procedure**: Unit tests with various profile fixtures
+- **Expected result**: Deterministic query builder for Adzuna search
+- **Commit message**: feat: add query parameter builder from profile
+- **Status**: DONE
+
+### Task 2.4: Job Normalization & Deduplication (EASY)
+- **Task ID**: T2.4
+- **Task name**: Normalize Adzuna RawJobRecord to JobCreate and deduplication logic
+- **Difficulty**: EASY
+- **Objective**: Pure functions to normalize Adzuna data to canonical Job schema and deduplicate by Adzuna id/redirect_url/composite key
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 03-job-sources.md, 06-database-design.md
+- **Source files to read**: backend/app/models/job.py, backend/app/job_sources/schemas.py, backend/app/repositories/job.py
+- **Files to modify**: backend/app/job_sources/normalize.py
+- **Dependencies**: T2.1, T1.4
+- **Implementation requirements**:
+  - `normalize_job(raw: RawJobRecord) -> JobCreate` - maps all Adzuna fields to JobCreate, stores raw as raw_evidence
+  - `dedup_key(job: JobCreate) -> tuple` - returns deduplication key (adzuna_id, redirect_url, composite)
+  - `is_duplicate(existing: Job, new: JobCreate) -> bool` - checks if new job duplicates existing
+  - All fields from Adzuna preserved; missing fields as None (never invented)
+  - Deterministic - same inputs always produce same outputs
+- **Acceptance criteria**:
+  - Normalization produces valid JobCreate with all fields mapped
+  - Deduplication correctly identifies duplicates by adzuna_id, then redirect_url, then composite
+  - Raw Adzuna response stored in raw_evidence
+- **Test procedure**: Unit tests with fixture raw records and duplicate scenarios
+- **Expected result**: Normalization and deduplication logic ready for search orchestration
+- **Commit message**: feat: add job normalization and deduplication
+- **Status**: DONE
+
+### Task 2.5: POST /jobs/search Endpoint Orchestration (EASY)
+- **Task ID**: T2.5
+- **Task name**: POST /jobs/search endpoint with full pipeline orchestration
+- **Difficulty**: EASY
+- **Objective**: Implement POST /jobs/search endpoint that runs the complete search pipeline
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 07-api-design.md, 03-job-sources.md, 01-architecture-overview.md
+- **Source files to read**: backend/app/api/jobs.py, backend/app/job_sources/adzuna.py, backend/app/job_sources/query_builder.py, backend/app/job_sources/normalize.py, backend/app/repositories/job.py
+- **Files to modify**: backend/app/api/search.py, backend/app/schemas/search.py
+- **Dependencies**: T2.2, T2.3, T2.4, T1.7
+- **Implementation requirements**:
+  - POST /jobs/search endpoint (no request body needed - uses current profile)
+  - Gets profile, builds query, calls Adzuna adapter
+  - Iterates pages up to config limit or quota exhaustion
+  - Normalizes and deduplicates each job
+  - Stores/upserts jobs via JobRepository
+  - Returns summary: jobs_found, jobs_new, jobs_updated, quota_exhausted flag
+  - Structured error responses per 07-api-design.md
+  - Handles "no profile" case (404)
+  - Handles quota exhaustion (returns partial results + flag)
+- **Acceptance criteria**:
+  - Endpoint calls Adzuna, processes results, stores jobs
+  - Returns correct summary structure
+  - Handles errors gracefully
+  - Sequential processing (no concurrency)
+- **Test procedure**: Integration tests with mocked Adzuna responses
+- **Expected result**: Working search endpoint that populates job database
+- **Commit message**: feat: add POST /jobs/search orchestration endpoint
+- **Status**: DONE
+
+### Task 2.6: Quota Handling (EASY)
+- **Task ID**: T2.6
+- **Task name**: Adzuna quota handling and user-facing quota exhausted state
+- **Difficulty**: EASY
+- **Objective**: Implement quota detection, graceful stop, and explicit user notification
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 03-job-sources.md, 07-api-design.md
+- **Source files to read**: backend/app/job_sources/adzuna.py, backend/app/api/search.py
+- **Files to modify**: backend/app/job_sources/adzuna.py (enhance), backend/app/api/search.py (enhance)
+- **Dependencies**: T2.2, T2.5
+- **Implementation requirements**:
+  - Detect quota exhaustion from Adzuna response (HTTP 429, error code, or daily limit header)
+  - Stop pagination immediately when quota exhausted
+  - Return explicit "quota exhausted for today" in search response
+  - Preserve jobs already fetched and stored
+  - No retry queue - search is single user-triggered request
+- **Acceptance criteria**:
+  - Quota exhaustion stops pagination cleanly
+  - Response includes quota_exhausted: true and message
+  - Already-fetched jobs remain in database
+- **Test procedure**: Unit test with mock quota exhausted response
+- **Expected result**: Robust quota handling with clear user feedback
+- **Commit message**: feat: add Adzuna quota handling
+- **Status**: DONE
+
+### Task 2.7: Search API Tests (EASY)
+- **Task ID**: T2.7
+- **Task name**: Integration tests for POST /jobs/search with mocked Adzuna
+- **Difficulty**: EASY
+- **Objective**: Write integration tests for search endpoint using fixture Adzuna responses
+- **Parent task**: Phase 2 Job Search
+- **Documents to read**: 09-testing-strategy.md
+- **Source files to read**: backend/app/api/search.py, backend/app/job_sources/adzuna.py, backend/tests/conftest.py
+- **Files to modify**: backend/tests/test_search.py
+- **Dependencies**: T2.5, T2.6
+- **Implementation requirements**:
+  - Fixture for sample Adzuna API response (multi-page)
+  - Fixture for quota exhausted response
+  - Test successful search stores jobs correctly
+  - Test deduplication prevents duplicates
+  - Test quota exhaustion returns partial results + flag
+  - Test no-profile case returns 404
+  - Test invalid profile config handled gracefully
+  - Use pytest-asyncio, httpx.ASGITransport
+- **Acceptance criteria**:
+  - All tests pass with `pytest backend/tests/`
+  - Coverage for search endpoint, adapter, normalization, deduplication
+- **Test procedure**: Run pytest
+- **Expected result**: Tested search pipeline with fixture-based Adzuna mocks
+- **Commit message**: test: add search integration tests with Adzuna fixtures
+- **Status**: NOT_STARTED

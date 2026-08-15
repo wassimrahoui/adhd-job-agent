@@ -55,6 +55,13 @@ class JobRepository:
             return None
         return self._row_to_job(row)
 
+    async def get_job_by_redirect_url(self, redirect_url: str) -> Optional[Job]:
+        """Get a job by redirect URL (for deduplication)."""
+        row = await self.db.fetchone("SELECT * FROM jobs WHERE redirect_url = ?", (redirect_url,))
+        if not row:
+            return None
+        return self._row_to_job(row)
+
     async def list_jobs(
         self,
         limit: int = 50,
