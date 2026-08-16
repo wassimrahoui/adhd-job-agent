@@ -4,12 +4,18 @@ import type { SettingsStatus } from '../types';
 import { LoadingOverlay } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { Badge } from '../components/Badge';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 export function SettingsPage() {
   const [status, setStatus] = useState<SettingsStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useKeyboardShortcuts([
+    { key: 'r', ctrlKey: true, action: loadStatus, description: 'Refresh status', global: false },
+    { key: 'c', ctrlKey: true, action: checkConnections, description: 'Check connections', global: false },
+  ], !loading && !!status);
 
   useEffect(() => {
     loadStatus();
@@ -32,12 +38,8 @@ export function SettingsPage() {
     setChecking(true);
     setError(null);
     try {
-      const health = await api.health();
-      setStatus(prev => prev ? {
-        ...prev,
-        adzuna_connected: true,
-        ollama_connected: health.ollama === 'connected',
-      } : null);
+      const data = await api.settings.getStatus();
+      setStatus(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Health check failed');
     } finally {

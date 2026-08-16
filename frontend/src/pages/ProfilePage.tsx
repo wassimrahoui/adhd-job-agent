@@ -1,45 +1,65 @@
 import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { api } from '../api/client';
-import type { Profile, ProfileCreate, ProfileUpdate } from '../types';
+import type { Profile, ProfileInput } from '../types';
 import { LoadingOverlay } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { Tag } from '../components/Badge';
+import { useToast } from '../components/Toast';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+
+const EMPTY_FORM: ProfileInput = {
+  work_experience: '',
+  technical_skills: [],
+  networking_experience: '',
+  education: '',
+  certifications: [],
+  languages: [],
+  desired_roles: [],
+  location_preferences: [],
+  salary_min: undefined,
+  salary_max: undefined,
+  salary_currency: 'EUR',
+  remote_preference: 'any',
+  experience_level: 'any',
+  excluded_keywords: [],
+  relevance_threshold: 50,
+  resume_text: '',
+  resume_file_path: '',
+};
+
+type ListField =
+  | 'technical_skills'
+  | 'certifications'
+  | 'languages'
+  | 'desired_roles'
+  | 'location_preferences'
+  | 'excluded_keywords';
 
 export function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
-  const [formData, setFormData] = useState<ProfileCreate | ProfileUpdate>({
-    full_name: '',
-    email: '',
-    phone: '',
-    location: '',
-    remote_preference: 'hybrid',
-    experience_level: 'mid',
-    desired_roles: [],
-    skills: [],
-    min_salary_eur: undefined,
-    max_salary_eur: undefined,
-    currency: 'EUR',
-    notice_period_weeks: undefined,
-    work_authorization: [],
-    preferred_industries: [],
-    excluded_keywords: [],
-    excluded_companies: [],
-    search_radius_km: undefined,
+  const [formData, setFormData] = useState<ProfileInput>(EMPTY_FORM);
+  const [newInputs, setNewInputs] = useState<Record<ListField, string>>({
+    technical_skills: '',
+    certifications: '',
+    languages: '',
+    desired_roles: '',
+    location_preferences: '',
+    excluded_keywords: '',
   });
 
-  const [newSkill, setNewSkill] = useState('');
-  const [newRole, setNewRole] = useState('');
-  const [newAuth, setNewAuth] = useState('');
-  const [newIndustry, setNewIndustry] = useState('');
-  const [newExcludedKeyword, setNewExcludedKeyword] = useState('');
-  const [newExcludedCompany, setNewExcludedCompany] = useState('');
+  const { showToast } = useToast();
+
+  useKeyboardShortcuts([
+    { key: 's', ctrlKey: true, action: () => { if (editMode && !saving) document.querySelector('form')?.requestSubmit(); }, description: 'Save profile', global: false },
+    { key: 'Escape', action: () => { if (editMode) setEditMode(false); }, description: 'Cancel edit mode', global: false },
+    { key: 'e', ctrlKey: true, action: () => { if (profile) setEditMode(true); }, description: 'Enter edit mode', global: false },
+  ], editMode);
 
   useEffect(() => {
     loadProfile();
@@ -52,43 +72,47 @@ export function ProfilePage() {
       const data = await api.profile.get();
       setProfile(data);
       setFormData({
-        full_name: data.full_name,
-        email: data.email,
-        phone: data.phone || '',
-        location: data.location,
+        work_experience: data.work_experience || '',
+        technical_skills: [...data.technical_skills],
+        networking_experience: data.networking_experience || '',
+        education: data.education || '',
+        certifications: [...data.certifications],
+        languages: [...data.languages],
+        desired_roles: [...data.desired_roles],
+        location_preferences: [...data.location_preferences],
+        salary_min: data.salary_min,
+        salary_max: data.salary_max,
+        salary_currency: data.salary_currency,
         remote_preference: data.remote_preference,
         experience_level: data.experience_level,
-        desired_roles: [...data.desired_roles],
-        skills: [...data.skills],
-        min_salary_eur: data.min_salary_eur,
-        max_salary_eur: data.max_salary_eur,
-        currency: data.currency,
-        notice_period_weeks: data.notice_period_weeks,
-        work_authorization: [...data.work_authorization],
-        preferred_industries: [...data.preferred_industries],
         excluded_keywords: [...data.excluded_keywords],
-        excluded_companies: [...data.excluded_companies],
-        search_radius_km: data.search_radius_km,
+        relevance_threshold: data.relevance_threshold,
+        resume_text: data.resume_text || '',
+        resume_file_path: data.resume_file_path || '',
       });
+      setEditMode(false);
     } catch {
-      // Profile doesn't exist yet
+      setProfile(null);
+      setFormData(EMPTY_FORM);
+      setEditMode(true);
     } finally {
       setLoading(false);
     }
   }
 
-  function handleChange<K extends keyof ProfileCreate>(field: K, value: ProfileCreate[K]) {
+  function handleChange<K extends keyof ProfileInput>(field: K, value: ProfileInput[K]) {
     setFormData(prev => ({ ...prev, [field]: value }));
   }
 
-  function addToArray(field: keyof ProfileCreate, value: string) {
+  function addToArray(field: ListField, value: string) {
     if (!value.trim()) return;
     const current = formData[field] as string[];
     if (current.includes(value.trim())) return;
     setFormData(prev => ({ ...prev, [field]: [...current, value.trim()] }));
+    setNewInputs(prev => ({ ...prev, [field]: '' }));
   }
 
-  function removeFromArray(field: keyof ProfileCreate, value: string) {
+  function removeFromArray(field: ListField, value: string) {
     const current = formData[field] as string[];
     setFormData(prev => ({ ...prev, [field]: current.filter(v => v !== value) }));
   }
@@ -97,18 +121,15 @@ export function ProfilePage() {
     e.preventDefault();
     setSaving(true);
     setError(null);
-    setSuccess(false);
     try {
-      if (profile) {
-        await api.profile.update(formData as ProfileUpdate);
-      } else {
-        await api.profile.create(formData as ProfileCreate);
-      }
-      setSuccess(true);
-      setEditMode(false);
+      await api.profile.upsert(formData);
+      showToast('success', 'Profile saved successfully!');
       await loadProfile();
+      setEditMode(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save profile');
+      const message = err instanceof Error ? err.message : 'Failed to save profile';
+      setError(message);
+      showToast('error', message);
     } finally {
       setSaving(false);
     }
@@ -118,70 +139,104 @@ export function ProfilePage() {
     return <LoadingOverlay message="Loading profile..." />;
   }
 
+  function renderListField(field: ListField, label: string, placeholder: string, variant?: 'error') {
+    return (
+      <section className="card p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">{label}</h2>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {(formData[field] as string[]).map((value, i) => (
+            <Tag key={i} removable={editMode} onRemove={() => removeFromArray(field, value)} variant={variant}>
+              {value}
+            </Tag>
+          ))}
+        </div>
+        {editMode && (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newInputs[field]}
+              onChange={e => setNewInputs(prev => ({ ...prev, [field]: e.target.value }))}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addToArray(field, newInputs[field]);
+                }
+              }}
+              className="input flex-1"
+              placeholder={placeholder}
+            />
+            <button type="button" onClick={() => addToArray(field, newInputs[field])} className="btn-secondary">
+              Add
+            </button>
+          </div>
+        )}
+      </section>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Profile & Preferences</h1>
-        <button
-          onClick={() => setEditMode(!editMode)}
-          className={editMode ? 'btn-secondary' : 'btn-primary'}
-        >
-          {editMode ? 'Cancel' : 'Edit Profile'}
-        </button>
+        {profile && (
+          <button
+            onClick={() => setEditMode(!editMode)}
+            className={editMode ? 'btn-secondary' : 'btn-primary'}
+          >
+            {editMode ? 'Cancel' : 'Edit Profile'}
+          </button>
+        )}
       </div>
 
-      {error && <ErrorMessage message={error} onRetry={() => handleSubmit(new Event('submit') as unknown as FormEvent<HTMLFormElement>)} />}
-      {success && (
-        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg text-green-800">
-          Profile saved successfully!
-        </div>
+      {!profile && (
+        <p className="text-gray-600 mb-4">No profile yet — fill this in to start searching for jobs.</p>
       )}
+
+      {error && <ErrorMessage message={error} onRetry={loadProfile} />}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Background</h2>
+          <div className="space-y-4">
             <div>
-              <label className="label">Full Name</label>
-              <input
-                type="text"
-                value={formData.full_name}
-                onChange={e => handleChange('full_name', e.target.value)}
+              <label className="label">Work Experience Summary</label>
+              <textarea
+                value={formData.work_experience}
+                onChange={e => handleChange('work_experience', e.target.value)}
                 className="input"
-                required
+                rows={4}
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Email</label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={e => handleChange('email', e.target.value)}
+              <label className="label">Networking / Cybersecurity / Sysadmin Experience</label>
+              <textarea
+                value={formData.networking_experience}
+                onChange={e => handleChange('networking_experience', e.target.value)}
                 className="input"
-                required
+                rows={3}
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Phone</label>
-              <input
-                type="tel"
-                value={formData.phone}
-                onChange={e => handleChange('phone', e.target.value)}
+              <label className="label">Education</label>
+              <textarea
+                value={formData.education}
+                onChange={e => handleChange('education', e.target.value)}
                 className="input"
+                rows={2}
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Location</label>
-              <input
-                type="text"
-                value={formData.location}
-                onChange={e => handleChange('location', e.target.value)}
+              <label className="label">Resume Text</label>
+              <textarea
+                value={formData.resume_text}
+                onChange={e => handleChange('resume_text', e.target.value)}
                 className="input"
-                required
+                rows={6}
                 disabled={!editMode}
+                placeholder="Paste your resume text here for AI analysis"
               />
             </div>
           </div>
@@ -194,10 +249,11 @@ export function ProfilePage() {
               <label className="label">Remote Preference</label>
               <select
                 value={formData.remote_preference}
-                onChange={e => handleChange('remote_preference', e.target.value as any)}
+                onChange={e => handleChange('remote_preference', e.target.value as ProfileInput['remote_preference'])}
                 className="input"
                 disabled={!editMode}
               >
+                <option value="any">Any</option>
                 <option value="remote">Remote</option>
                 <option value="hybrid">Hybrid</option>
                 <option value="on_site">On-site</option>
@@ -207,245 +263,78 @@ export function ProfilePage() {
               <label className="label">Experience Level</label>
               <select
                 value={formData.experience_level}
-                onChange={e => handleChange('experience_level', e.target.value as any)}
+                onChange={e => handleChange('experience_level', e.target.value as ProfileInput['experience_level'])}
                 className="input"
                 disabled={!editMode}
               >
+                <option value="any">Any</option>
                 <option value="entry">Entry</option>
+                <option value="junior">Junior</option>
                 <option value="mid">Mid</option>
                 <option value="senior">Senior</option>
                 <option value="lead">Lead</option>
+                <option value="principal">Principal</option>
               </select>
             </div>
             <div>
-              <label className="label">Min Salary (EUR)</label>
+              <label className="label">Min Salary</label>
               <input
                 type="number"
-                value={formData.min_salary_eur || ''}
-                onChange={e => handleChange('min_salary_eur', e.target.value ? parseInt(e.target.value) : undefined)}
+                value={formData.salary_min ?? ''}
+                onChange={e => handleChange('salary_min', e.target.value ? parseInt(e.target.value) : undefined)}
                 className="input"
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Max Salary (EUR)</label>
+              <label className="label">Max Salary</label>
               <input
                 type="number"
-                value={formData.max_salary_eur || ''}
-                onChange={e => handleChange('max_salary_eur', e.target.value ? parseInt(e.target.value) : undefined)}
+                value={formData.salary_max ?? ''}
+                onChange={e => handleChange('salary_max', e.target.value ? parseInt(e.target.value) : undefined)}
                 className="input"
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Notice Period (weeks)</label>
+              <label className="label">Currency</label>
               <input
-                type="number"
-                value={formData.notice_period_weeks || ''}
-                onChange={e => handleChange('notice_period_weeks', e.target.value ? parseInt(e.target.value) : undefined)}
+                type="text"
+                value={formData.salary_currency}
+                onChange={e => handleChange('salary_currency', e.target.value)}
                 className="input"
                 disabled={!editMode}
               />
             </div>
             <div>
-              <label className="label">Search Radius (km)</label>
+              <label className="label">Relevance Threshold ({formData.relevance_threshold}%)</label>
               <input
-                type="number"
-                value={formData.search_radius_km || ''}
-                onChange={e => handleChange('search_radius_km', e.target.value ? parseInt(e.target.value) : undefined)}
-                className="input"
+                type="range"
+                min={0}
+                max={100}
+                value={formData.relevance_threshold}
+                onChange={e => handleChange('relevance_threshold', parseInt(e.target.value))}
+                className="w-full"
                 disabled={!editMode}
               />
             </div>
           </div>
         </section>
 
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Desired Roles</h2>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.desired_roles?.map((role, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('desired_roles', role)}>
-                {role}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newRole}
-                onChange={e => setNewRole(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('desired_roles', newRole); setNewRole(''); }}}
-                className="input flex-1"
-                placeholder="Add role (e.g., Security Engineer)"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('desired_roles', newRole); setNewRole(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Skills</h2>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.skills?.map((skill, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('skills', skill)}>
-                {skill}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newSkill}
-                onChange={e => setNewSkill(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('skills', newSkill); setNewSkill(''); }}}
-                className="input flex-1"
-                placeholder="Add skill (e.g., Python, AWS, Kubernetes)"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('skills', newSkill); setNewSkill(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Work Authorization</h2>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.work_authorization?.map((auth, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('work_authorization', auth)}>
-                {auth}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newAuth}
-                onChange={e => setNewAuth(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('work_authorization', newAuth); setNewAuth(''); }}}
-                className="input flex-1"
-                placeholder="Add authorization (e.g., EU Citizen, Blue Card)"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('work_authorization', newAuth); setNewAuth(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Preferred Industries</h2>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.preferred_industries?.map((ind, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('preferred_industries', ind)}>
-                {ind}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newIndustry}
-                onChange={e => setNewIndustry(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('preferred_industries', newIndustry); setNewIndustry(''); }}}
-                className="input flex-1"
-                placeholder="Add industry (e.g., Cybersecurity, Fintech)"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('preferred_industries', newIndustry); setNewIndustry(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Excluded Keywords</h2>
-          <p className="text-sm text-gray-600 mb-3">Jobs containing these keywords in title/description will be filtered out</p>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.excluded_keywords?.map((kw, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('excluded_keywords', kw)} variant="error">
-                {kw}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newExcludedKeyword}
-                onChange={e => setNewExcludedKeyword(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('excluded_keywords', newExcludedKeyword); setNewExcludedKeyword(''); }}}
-                className="input flex-1"
-                placeholder="Add keyword (e.g., intern, student, senior)"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('excluded_keywords', newExcludedKeyword); setNewExcludedKeyword(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="card p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Excluded Companies</h2>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {formData.excluded_companies?.map((comp, i) => (
-              <Tag key={i} removable onRemove={() => removeFromArray('excluded_companies', comp)} variant="error">
-                {comp}
-              </Tag>
-            ))}
-          </div>
-          {editMode && (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newExcludedCompany}
-                onChange={e => setNewExcludedCompany(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('excluded_companies', newExcludedCompany); setNewExcludedCompany(''); }}}
-                className="input flex-1"
-                placeholder="Add company name"
-              />
-              <button
-                type="button"
-                onClick={() => { addToArray('excluded_companies', newExcludedCompany); setNewExcludedCompany(''); }}
-                className="btn-secondary"
-              >
-                Add
-              </button>
-            </div>
-          )}
-        </section>
+        {renderListField('desired_roles', 'Desired Roles', 'Add role (e.g., Security Engineer)')}
+        {renderListField('technical_skills', 'Technical Skills', 'Add skill (e.g., Python, AWS, Kubernetes)')}
+        {renderListField('certifications', 'Certifications', 'Add certification (e.g., CompTIA Security+)')}
+        {renderListField('languages', 'Languages', 'Add language (e.g., German, English)')}
+        {renderListField('location_preferences', 'Preferred Locations', 'Add location (e.g., Munich, Remote Germany)')}
+        {renderListField('excluded_keywords', 'Excluded Keywords', 'Add keyword (e.g., intern, student, senior)', 'error')}
 
         {editMode && (
           <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-            <button type="button" onClick={() => setEditMode(false)} className="btn-secondary">
-              Cancel
-            </button>
+            {profile && (
+              <button type="button" onClick={() => setEditMode(false)} className="btn-secondary">
+                Cancel
+              </button>
+            )}
             <button type="submit" disabled={saving} className="btn-primary">
               {saving ? 'Saving...' : 'Save Profile'}
             </button>

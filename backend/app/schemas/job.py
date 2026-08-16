@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 from app.models import WorkMode, EmploymentType, AnalysisStatus, Recommendation, Confidence
 
@@ -64,11 +64,14 @@ class JobListItemSchema(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     salary_currency: Optional[str] = None
+    salary_is_predicted: bool = False
+    redirect_url: Optional[str] = None
     posted_at: Optional[datetime] = None
     discovered_at: datetime
     passed_prefilter: bool
     score: Optional[int] = None
     recommendation: Optional[str] = None
+    confidence: Optional[str] = None
     # Recommendation fields
     recommendation_category: Optional[str] = None
     recommendation_priority: Optional[str] = None
@@ -105,11 +108,34 @@ class JobDetailSchema(BaseModel):
     recommendation_category: Optional[str] = None
     recommendation_priority: Optional[str] = None
     recommendation_primary_reason: Optional[str] = None
-    recommendation_secondary_reasons: Optional[str] = None
+    recommendation_secondary_reasons: List[str] = Field(default_factory=list)
     recommendation_explanation: Optional[str] = None
-    recommendation_missing_skills: Optional[str] = None
-    recommendation_strengths: Optional[str] = None
-    recommendation_concerns: Optional[str] = None
-    recommendation_action_items: Optional[str] = None
+    recommendation_missing_skills: List[str] = Field(default_factory=list)
+    recommendation_strengths: List[str] = Field(default_factory=list)
+    recommendation_concerns: List[str] = Field(default_factory=list)
+    recommendation_action_items: List[str] = Field(default_factory=list)
     recommended_at: Optional[datetime] = None
     recommendation_model: Optional[str] = None
+
+    @field_validator(
+        "recommendation_secondary_reasons",
+        "recommendation_missing_skills",
+        "recommendation_strengths",
+        "recommendation_concerns",
+        "recommendation_action_items",
+        mode="before",
+    )
+    @classmethod
+    def _parse_json_array(cls, value):
+        if value is None or isinstance(value, list):
+            return value or []
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            try:
+                import json
+                parsed = json.loads(value)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return []

@@ -126,6 +126,8 @@ class JobListItem(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     salary_currency: Optional[str] = None
+    salary_is_predicted: bool = False
+    redirect_url: Optional[str] = None
     posted_at: Optional[datetime] = None
     discovered_at: datetime
     passed_prefilter: bool

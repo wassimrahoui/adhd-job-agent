@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 from datetime import datetime
 
-from app.scoring.cloud_client import CloudScoringClient, get_cloud_scoring_client
+from app.scoring.ollama_client import OllamaScoringClient, get_ollama_scoring_client
 from app.scoring.final_score import calculate_final_score
 from app.schemas.scoring import ScoringInput, ScoringOutput, ScoringConfig
 from app.repositories.job import JobRepository
@@ -11,21 +11,21 @@ from app.core.config import settings
 
 
 class ScoringService:
-    """Service for running job scoring via cloud LLM with evidence-based fallback."""
+    """Service for running job scoring via local Ollama LLM with evidence-based fallback."""
 
     def __init__(
         self,
-        client: Optional[CloudScoringClient] = None,
+        client: Optional[OllamaScoringClient] = None,
         job_repo: Optional[JobRepository] = None,
     ):
         self._client = client
         self._job_repo = job_repo
-        self._model = settings.cloud_scoring_model
+        self._model = settings.ollama_model
         self._config = ScoringConfig()
 
-    async def _get_client(self) -> CloudScoringClient:
+    async def _get_client(self) -> OllamaScoringClient:
         if self._client is None:
-            self._client = await get_cloud_scoring_client()
+            self._client = await get_ollama_scoring_client()
         return self._client
 
     def set_config(self, config: ScoringConfig) -> None:
@@ -37,17 +37,16 @@ class ScoringService:
         self._job_repo = job_repo
 
     async def score_job(self, input_data: ScoringInput) -> ScoringOutput:
-        """Score a job using cloud LLM with evidence-based fallback."""
+        """Score a job using local Ollama LLM with evidence-based fallback."""
         client = await self._get_client()
         
-        if client.api_key and client.base_url:
-            # Try cloud scoring first
-            try:
-                prompt = build_scoring_prompt(input_data, self._config)
-                return await client.score_job(input_data, prompt)
-            except Exception:
-                # Fall back to evidence-based scoring
-                pass
+        # Try local Ollama scoring first
+        try:
+            prompt = build_scoring_prompt(input_data, self._config)
+            return await client.score_job(input_data, prompt)
+        except Exception as e:
+            # Fall back to evidence-based scoring
+            print(f"Ollama scoring failed, falling back to evidence-based: {e}")
         
         # Evidence-based fallback
         return calculate_final_score(input_data, self._config)
@@ -69,21 +68,22 @@ class ScoringService:
                 "scored_at": datetime.utcnow(),
                 "scoring_model": result.model_used,
             }
-            await self._job_repo.update_scoring(input_data.job_id, scoring_data)
+            if input_data.job_id is not None:
+                await self._job_repo.update_scoring(input_data.job_id, scoring_data)
         
         return result
 
     async def score_job_evidence_based(self, input_data: ScoringInput) -> ScoringOutput:
-        """Score a job using only evidence-based scoring (no cloud)."""
+        """Score a job using only evidence-based scoring (no LLM)."""
         return calculate_final_score(input_data, self._config)
 
     async def health_check(self) -> bool:
-        """Check if cloud scoring API is available."""
+        """Check if local Ollama is available."""
         client = await self._get_client()
         return await client.health_check()
 
     async def close(self) -> None:
-        """Close the cloud scoring client."""
+        """Close the Ollama client."""
         if self._client:
             await self._client.close()
             self._client = None

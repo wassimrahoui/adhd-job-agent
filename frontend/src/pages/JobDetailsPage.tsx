@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Job } from '../types';
@@ -6,6 +6,7 @@ import { formatSalary, getRecommendationBadge, getPriorityBadge, getConfidenceBa
 import { LoadingOverlay } from '../components/LoadingSpinner';
 import { ErrorMessage } from '../components/ErrorMessage';
 import { Badge } from '../components/Badge';
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 export function JobDetailsPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -13,24 +14,30 @@ export function JobDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (jobId) {
-      loadJob();
-    }
-  }, [jobId]);
-
-  async function loadJob() {
+  const loadJob = useCallback(async () => {
+    if (!jobId) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await api.jobs.get(parseInt(jobId!));
+      const data = await api.jobs.get(parseInt(jobId));
       setJob(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load job');
     } finally {
       setLoading(false);
     }
-  }
+  }, [jobId]);
+
+  useEffect(() => {
+    loadJob();
+  }, [loadJob]);
+
+  useKeyboardShortcuts([
+    { key: 'ArrowLeft', action: () => window.history.back(), description: 'Go back to jobs list', global: false },
+    { key: 'b', ctrlKey: true, action: () => window.history.back(), description: 'Go back to jobs list', global: false },
+    { key: 'a', ctrlKey: true, action: () => { if (job?.redirect_url) window.open(job.redirect_url, '_blank'); }, description: 'Open apply link', global: false },
+    { key: 'r', ctrlKey: true, action: loadJob, description: 'Reload job details', global: false },
+  ], !loading && !!job);
 
   if (loading) {
     return <LoadingOverlay message="Loading job details..." />;
@@ -44,9 +51,10 @@ export function JobDetailsPage() {
     );
   }
 
+  const analysis = job.analysis;
   const recBadge = getRecommendationBadge(job.recommendation_category);
   const priorityBadge = getPriorityBadge(job.recommendation_priority);
-  const confidenceBadge = getConfidenceBadge(job.ai_confidence as any);
+  const confidenceBadge = getConfidenceBadge(analysis?.confidence);
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -64,48 +72,52 @@ export function JobDetailsPage() {
               <h1 className="text-2xl font-bold text-gray-900">{job.title}</h1>
               <p className="text-gray-600 mt-1 text-lg">{job.company}</p>
               <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-gray-500">
-                <span className="flex items-center gap-1">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  {job.location}
-                </span>
+                {job.location && (
+                  <span className="flex items-center gap-1">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    {job.location}
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   {formatSalary(job.salary_min, job.salary_max, job.salary_currency, job.salary_is_predicted)}
                 </span>
-                {job.contract_type && (
-                  <Badge variant="info">{job.contract_type}</Badge>
+                {job.employment_type && (
+                  <Badge variant="info">{job.employment_type}</Badge>
                 )}
-                {job.working_hours && (
-                  <Badge variant="gray">{job.working_hours}</Badge>
+                {job.work_mode && (
+                  <Badge variant="gray">{job.work_mode}</Badge>
                 )}
               </div>
             </div>
             <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center shrink-0">
               <div className="flex flex-col items-end gap-1">
-                {job.ai_score !== undefined && (
-                  <div className="text-3xl font-bold text-gray-900">{Math.round(job.ai_score)}%</div>
+                {analysis?.score !== undefined && analysis?.score !== null && (
+                  <div className="text-3xl font-bold text-gray-900">{Math.round(analysis.score)}%</div>
                 )}
                 <div className="flex flex-col gap-1">
                   <span className={`${recBadge.className} px-3 py-1`}>{recBadge.label}</span>
                   <span className={`${priorityBadge.className} px-3 py-1`}>{priorityBadge.label}</span>
-                  {job.ai_confidence && (
+                  {analysis?.confidence && (
                     <span className={`${confidenceBadge.className} px-3 py-1`}>{confidenceBadge.label}</span>
                   )}
                 </div>
               </div>
-              <a
-                href={job.redirect_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary text-lg px-6 py-3 whitespace-nowrap"
-              >
-                Apply on Company Site →
-              </a>
+              {job.redirect_url && (
+                <a
+                  href={job.redirect_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary text-lg px-6 py-3 whitespace-nowrap"
+                >
+                  Apply on Company Site →
+                </a>
+              )}
             </div>
           </div>
 
@@ -117,14 +129,14 @@ export function JobDetailsPage() {
           )}
 
           {job.recommendation_primary_reason && (
-            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg mt-4">
               <h3 className="font-medium text-gray-900 mb-2">Primary Reason</h3>
               <p className="text-gray-700">{job.recommendation_primary_reason}</p>
             </div>
           )}
 
-          {job.recommendation_secondary_reasons && job.recommendation_secondary_reasons.length > 0 && (
-            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          {job.recommendation_secondary_reasons.length > 0 && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg mt-4">
               <h3 className="font-medium text-gray-900 mb-2">Additional Reasons</h3>
               <ul className="list-disc list-inside space-y-1 text-gray-700">
                 {job.recommendation_secondary_reasons.map((reason, i) => (
@@ -134,16 +146,16 @@ export function JobDetailsPage() {
             </div>
           )}
 
-          {job.ai_explanation && (
-            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+          {analysis?.explanation && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg mt-4">
               <h3 className="font-medium text-gray-900 mb-2">AI Analysis</h3>
-              <p className="text-gray-700 whitespace-pre-wrap">{job.ai_explanation}</p>
+              <p className="text-gray-700 whitespace-pre-wrap">{analysis.explanation}</p>
             </div>
           )}
         </article>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {(job.ai_matched_skills && job.ai_matched_skills.length > 0) || (job.ai_missing_skills && job.ai_missing_skills.length > 0) ? (
+          {((analysis?.matching_skills.length ?? 0) > 0 || job.recommendation_missing_skills.length > 0) && (
             <section className="card p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,21 +164,21 @@ export function JobDetailsPage() {
                 Skills
               </h2>
               <div className="space-y-4">
-                {job.ai_matched_skills && job.ai_matched_skills.length > 0 && (
+                {analysis && analysis.matching_skills.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-medium text-green-700 mb-2">Matched ({job.ai_matched_skills.length})</h3>
+                    <h3 className="text-sm font-medium text-green-700 mb-2">Matched ({analysis.matching_skills.length})</h3>
                     <div className="flex flex-wrap gap-2">
-                      {job.ai_matched_skills.map((skill, i) => (
-                        <Badge key={i} variant="success">{skill}</Badge>
+                      {analysis.matching_skills.map((item, i) => (
+                        <Badge key={i} variant="success">{item.claim}</Badge>
                       ))}
                     </div>
                   </div>
                 )}
-                {job.ai_missing_skills && job.ai_missing_skills.length > 0 && (
+                {job.recommendation_missing_skills.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-medium text-red-700 mb-2">Missing ({job.ai_missing_skills.length})</h3>
+                    <h3 className="text-sm font-medium text-red-700 mb-2">Missing ({job.recommendation_missing_skills.length})</h3>
                     <div className="flex flex-wrap gap-2">
-                      {job.ai_missing_skills.map((skill, i) => (
+                      {job.recommendation_missing_skills.map((skill, i) => (
                         <Badge key={i} variant="error">{skill}</Badge>
                       ))}
                     </div>
@@ -174,52 +186,30 @@ export function JobDetailsPage() {
                 )}
               </div>
             </section>
-          ) : null}
+          )}
 
-          {(job.ai_matched_experience && job.ai_matched_experience.length > 0) || (job.ai_missing_experience && job.ai_missing_experience.length > 0) ? (
+          {analysis && analysis.matching_experience.length > 0 && (
             <section className="card p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
-                Experience
+                Matched Experience
               </h2>
-              <div className="space-y-4">
-                {job.ai_matched_experience && job.ai_matched_experience.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-medium text-green-700 mb-2">Matched</h3>
-                    <ul className="space-y-1 text-gray-700">
-                      {job.ai_matched_experience.map((exp, i) => (
-                        <li key={i} className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          {exp}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {job.ai_missing_experience && job.ai_missing_experience.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-medium text-red-700 mb-2">Gaps</h3>
-                    <ul className="space-y-1 text-gray-700">
-                      {job.ai_missing_experience.map((exp, i) => (
-                        <li key={i} className="flex items-center gap-2">
-                          <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                          </svg>
-                          {exp}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+              <ul className="space-y-1 text-gray-700">
+                {analysis.matching_experience.map((item, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                    </svg>
+                    {item.claim}
+                  </li>
+                ))}
+              </ul>
             </section>
-          ) : null}
+          )}
 
-          {job.ai_missing_requirements && job.ai_missing_requirements.length > 0 && (
+          {analysis && analysis.missing_requirements.length > 0 && (
             <section className="card p-6 md:col-span-2">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -228,25 +218,56 @@ export function JobDetailsPage() {
                 Missing Requirements
               </h2>
               <div className="space-y-3">
-                {job.ai_missing_requirements.map((req, i) => (
+                {analysis.missing_requirements.map((req, i) => (
                   <div key={i} className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <Badge variant={req.severity === 'critical' ? 'error' : 'warning'}>
-                        {req.severity}
-                      </Badge>
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">{req.requirement}</p>
-                        <p className="text-sm text-gray-600 mt-1">Category: {req.category}</p>
-                        {req.notes && <p className="text-sm text-gray-500 mt-1">{req.notes}</p>}
-                      </div>
-                    </div>
+                    <p className="font-medium text-gray-900">{req.claim}</p>
+                    {req.source_excerpt && <p className="text-sm text-gray-600 mt-1">"{req.source_excerpt}"</p>}
                   </div>
                 ))}
               </div>
             </section>
           )}
 
-          {job.recommendation_strengths && job.recommendation_strengths.length > 0 && (
+          {analysis && analysis.unknown_requirements && analysis.unknown_requirements.length > 0 && (
+            <section className="card p-6 md:col-span-2">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Unknown Requirements
+              </h2>
+              <div className="space-y-3">
+                {analysis.unknown_requirements.map((req, i) => (
+                  <div key={i} className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                    <p className="font-medium text-gray-900">{req.claim}</p>
+                    {req.source_excerpt && <p className="text-sm text-gray-600 mt-1">"{req.source_excerpt}"</p>}
+                    <p className="text-xs text-gray-500 mt-1">Not mentioned in your profile — cannot confirm match or gap</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {analysis && analysis.evidence && analysis.evidence.length > 0 && (
+            <section className="card p-6 md:col-span-2">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Evidence
+              </h2>
+              <div className="space-y-3">
+                {analysis.evidence.map((item, i) => (
+                  <div key={i} className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                    <p className="font-medium text-gray-900">{item.claim}</p>
+                    {item.source_excerpt && <p className="text-sm text-gray-600 mt-1">"{item.source_excerpt}"</p>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {job.recommendation_strengths.length > 0 && (
             <section className="card p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -267,7 +288,7 @@ export function JobDetailsPage() {
             </section>
           )}
 
-          {job.recommendation_concerns && job.recommendation_concerns.length > 0 && (
+          {job.recommendation_concerns.length > 0 && (
             <section className="card p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -288,7 +309,7 @@ export function JobDetailsPage() {
             </section>
           )}
 
-          {job.recommendation_action_items && job.recommendation_action_items.length > 0 && (
+          {job.recommendation_action_items.length > 0 && (
             <section className="card p-6 md:col-span-2">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -317,19 +338,21 @@ export function JobDetailsPage() {
           </section>
         </div>
 
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <a
-            href={job.redirect_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-primary text-lg px-8 py-3 inline-flex items-center gap-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-            Apply on Company Site
-          </a>
-        </div>
+        {job.redirect_url && (
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <a
+              href={job.redirect_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-primary text-lg px-8 py-3 inline-flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Apply on Company Site
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

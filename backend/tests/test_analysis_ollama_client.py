@@ -49,7 +49,9 @@ class TestOllamaClient:
     async def test_generate_connection_error(self):
         client = OllamaClient()
         mock_client = AsyncMock()
-        mock_client.post.side_effect = Exception("Connection refused")
+        import httpx
+        mock_client.post.side_effect = httpx.ConnectError("Connection refused")
+        mock_client.is_closed = False
         client._client = mock_client
 
         with pytest.raises(OllamaConnectionError):
@@ -114,6 +116,7 @@ class TestOllamaClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"response": "not valid json"}
         mock_client.post.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         with pytest.raises(OllamaResponseError):
@@ -127,6 +130,7 @@ class TestOllamaClient:
         mock_response.status_code = 200
         mock_response.json.return_value = {"response": '{"invalid": "data"}'}
         mock_client.post.return_value = mock_response
+        mock_client.is_closed = False
         client._client = mock_client
 
         with pytest.raises(OllamaResponseError):
@@ -179,6 +183,7 @@ class TestOllamaClient:
         client = OllamaClient()
         mock_client = AsyncMock()
         mock_client.get.side_effect = Exception("Connection refused")
+        mock_client.is_closed = False
         client._client = mock_client
 
         result = await client.health_check()

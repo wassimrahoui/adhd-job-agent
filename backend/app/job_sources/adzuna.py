@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 from typing import Any, Dict, List, Optional
-from urllib.parse import urljoin
 
 from app.core.config import settings
 from app.job_sources.base import JobSourceAdapter, JobRef
@@ -63,17 +62,21 @@ class AdzunaSourceAdapter(JobSourceAdapter):
     
     def _build_search_url(self, page: int) -> str:
         """Build the search endpoint URL for a given page."""
-        return urljoin(self._base_url, f"{self._country}/search/{page}")
+        return f"{self._base_url.rstrip('/')}/{self._country}/search/{page}"
     
-    def _build_query_params(self, query_params: Dict[str, Any], page: int) -> Dict[str, Any]:
-        """Build query parameters for Adzuna API request."""
+    def _build_query_params(self, query_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Build query parameters for Adzuna API request.
+
+        Note: page number is NOT included here - it's already part of the URL
+        path (/search/{page}), and Adzuna rejects the request with a 400 if a
+        redundant 'page' query parameter is also sent.
+        """
         params = {
             "app_id": self._app_id,
             "app_key": self._app_key,
             "results_per_page": self._results_per_page,
-            "page": page,
         }
-        
+
         # Add user-provided query parameters
         for key, value in query_params.items():
             if value is not None and value != "":
@@ -189,7 +192,7 @@ class AdzunaSourceAdapter(JobSourceAdapter):
         
         for page in range(1, max_pages + 1):
             url = self._build_search_url(page)
-            params = self._build_query_params(query_params, page)
+            params = self._build_query_params(query_params)
             
             try:
                 response = await client.get(url, params=params)
@@ -265,7 +268,7 @@ class AdzunaSourceAdapter(JobSourceAdapter):
         
         for page in range(1, max_pages + 1):
             url = self._build_search_url(page)
-            params = self._build_query_params(query_params, page)
+            params = self._build_query_params(query_params)
             
             try:
                 response = await client.get(url, params=params)

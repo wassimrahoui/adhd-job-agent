@@ -1,4 +1,16 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+import type {
+  Profile,
+  ProfileInput,
+  JobListItem,
+  Job,
+  SearchResponse,
+  AnalysisRunResponse,
+  ProcessingResponse,
+  HealthResponse,
+  SettingsStatus,
+} from '../types';
+
+const API_BASE = '';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -11,7 +23,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `HTTP ${response.status}`);
+    const detail = error?.detail;
+    const message = typeof detail === 'string' ? detail : detail?.message || `HTTP ${response.status}`;
+    throw new Error(message);
   }
 
   if (response.status === 204) {
@@ -22,18 +36,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; database: string; ollama: string }>('/health'),
+  health: () => request<HealthResponse>('/health'),
 
   profile: {
-    get: () => request<import('../types').Profile>('/profile'),
-    create: (data: import('../types').ProfileCreate) =>
-      request<import('../types').Profile>('/profile', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
-    update: (data: import('../types').ProfileUpdate) =>
-      request<import('../types').Profile>('/profile', {
-        method: 'PATCH',
+    get: () => request<Profile>('/profile'),
+    upsert: (data: ProfileInput) =>
+      request<Profile>('/profile', {
+        method: 'PUT',
         body: JSON.stringify(data),
       }),
   },
@@ -45,30 +54,39 @@ export const api = {
       if (params?.limit) searchParams.set('limit', String(params.limit));
       if (params?.offset) searchParams.set('offset', String(params.offset));
       const query = searchParams.toString();
-      return request<import('../types').JobListItem[]>(`/jobs${query ? `?${query}` : ''}`);
+      return request<JobListItem[]>(`/jobs${query ? `?${query}` : ''}`);
     },
-    get: (id: number) => request<import('../types').Job>(`/jobs/${id}`),
+    get: (id: number) => request<Job>(`/jobs/${id}`),
   },
 
   search: {
-    run: (data: import('../types').SearchRequest) =>
-      request<import('../types').SearchResponse>('/jobs/search', {
-        method: 'POST',
-        body: JSON.stringify(data),
-      }),
+    run: () => request<SearchResponse>('/jobs/search', { method: 'POST' }),
   },
 
   analysis: {
-    run: (data: import('../types').AnalysisRunRequest) =>
-      request<import('../types').AnalysisRunResponse>('/analysis/run', {
+    run: (params?: { only_passed?: boolean; limit?: number }) => {
+      const searchParams = new URLSearchParams();
+      if (params?.only_passed !== undefined) searchParams.set('only_passed', String(params.only_passed));
+      if (params?.limit) searchParams.set('limit', String(params.limit));
+      const query = searchParams.toString();
+      return request<AnalysisRunResponse>(`/analysis/run${query ? `?${query}` : ''}`, { method: 'POST' });
+    },
+    getJobInput: (jobId: number) => request<{ job: unknown; profile: unknown }>(`/analysis/job/${jobId}`),
+  },
+
+  processing: {
+    run: (params?: { only_passed?: boolean; limit?: number; skip_existing?: boolean }) =>
+      request<ProcessingResponse>('/processing/run', {
         method: 'POST',
-        body: JSON.stringify(data),
+        body: JSON.stringify({
+          only_passed: params?.only_passed ?? true,
+          limit: params?.limit ?? 50,
+          skip_existing: params?.skip_existing ?? true,
+        }),
       }),
-    getJobInput: (jobId: number) =>
-      request<{ job: import('../types').Job; profile: import('../types').Profile }>(`/analysis/job/${jobId}`),
   },
 
   settings: {
-    getStatus: () => request<import('../types').SettingsStatus>('/settings/status'),
+    getStatus: () => request<SettingsStatus>('/settings/status'),
   },
 };

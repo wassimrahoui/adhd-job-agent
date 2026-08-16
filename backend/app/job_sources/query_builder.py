@@ -18,30 +18,35 @@ def build_adzuna_query(profile: Profile) -> Dict[str, Any]:
         Dictionary of query parameters for Adzuna API
     """
     params: Dict[str, Any] = {}
-    
-    # Keywords (what) - from desired_roles
-    if profile.desired_roles:
-        # Join multiple roles with OR logic (Adzuna accepts comma-separated)
-        params["what"] = ", ".join(profile.desired_roles)
-    
-    # Location (where) - from location_preferences
+
+    # Keywords - from desired_roles. Adzuna's "what" performs a whole-phrase
+    # AND match, so comma-joining multiple roles into it (the previous
+    # approach) matched nothing since no single job title contains every
+    # role. "what_or" is Adzuna's real OR-across-terms parameter and expects
+    # space-separated terms, not comma-separated.
+    what_or_terms: List[str] = list(profile.desired_roles) if profile.desired_roles else []
+
+    # Remote/hybrid/on-site preference
+    # Adzuna has no direct remote filter; adding "remote"/"hybrid" as an
+    # additional what_or candidate broadens the OR set rather than requiring
+    # it, which is the best available approximation.
+    if profile.remote_preference == RemotePreference.REMOTE:
+        what_or_terms.append("remote")
+    elif profile.remote_preference == RemotePreference.HYBRID:
+        what_or_terms.append("hybrid")
+
+    if what_or_terms:
+        params["what_or"] = " ".join(what_or_terms)
+
+    # Location (where) - Adzuna's "where" is a single free-text location, not
+    # a multi-value OR list; comma-joining multiple preferences (the previous
+    # approach) matched nothing. Use the primary (first) preference only.
     if profile.location_preferences:
-        # Join multiple locations with OR logic
-        params["where"] = ", ".join(profile.location_preferences)
-    
+        params["where"] = profile.location_preferences[0]
+
     # Salary minimum
     if profile.salary_min is not None and profile.salary_min > 0:
         params["salary_min"] = profile.salary_min
-    
-    # Remote/hybrid/on-site preference
-    # Adzuna uses contract_time for full/part time and doesn't have direct remote filter
-    # We'll use sort_by for relevance and handle remote filtering client-side
-    if profile.remote_preference == RemotePreference.REMOTE:
-        # Adzuna doesn't have a direct remote filter in search
-        # Could add "remote" to keywords or handle post-search
-        params["what"] = (params.get("what", "") + ", remote").lstrip(", ")
-    elif profile.remote_preference == RemotePreference.HYBRID:
-        params["what"] = (params.get("what", "") + ", hybrid").lstrip(", ")
     
     # Contract type (employment type)
     if profile.experience_level:
@@ -52,15 +57,65 @@ def build_adzuna_query(profile: Profile) -> Dict[str, Any]:
     # Will be handled as client-side post-filter
     # Could potentially add to 'what' with NOT operator but Adzuna doesn't support it
     
-    # Default sort by relevance (date)
+    # Default sort by relevance
     params["sort_by"] = "relevance"
-    params["sort_order"] = "desc"
-    
-    # Content type - full description not available, but we want max content
-    params["content_type"] = "full"
+
+    # Request JSON explicitly, per Adzuna's documented query parameter
+    params["content-type"] = "application/json"
     
     # Remove None/empty values
     return {k: v for k, v in params.items() if v is not None and v != ""}
+
+
+def build_adzuna_queries(profile: Profile) -> List[Dict[str, Any]]:
+    """Build one precise Adzuna query per desired role, instead of one broad query.
+
+    Adzuna's "what_or" performs OR matching across *individual words*, not
+    across whole role phrases - "Security Engineer" OR "SOC Analyst" becomes
+    "Security" OR "Engineer" OR "SOC" OR "Analyst", which matches unrelated
+    jobs like "Security Guard" or "HVAC Engineer" just as readily as real
+    matches. Issuing one exact-phrase "what" query per role (true AND-within-
+    phrase matching) and merging the results client-side gives real OR-of-
+    phrases semantics instead.
+
+    Returns a list with one query dict per desired role, sharing the same
+    location/salary/sort params. If the profile has no desired_roles, returns
+    a single query with no "what" filter at all (relies on location/salary
+    alone), matching the previous no-keywords behavior.
+    """
+    shared: Dict[str, Any] = {}
+
+    # Adzuna's "where" is a single free-text location, not a multi-value OR
+    # list. With exactly one preference it's safe to scope the query to it
+    # directly. With multiple preferences, picking just one (e.g. the first)
+    # would silently drop real jobs in the others - Adzuna has no way to
+    # OR multiple locations in one query - so instead we search unscoped
+    # (country=de only) and let the pre-filter's location check, which does
+    # correctly match against every location_preference, narrow it down.
+    if profile.location_preferences and len(profile.location_preferences) == 1:
+        shared["where"] = profile.location_preferences[0]
+
+    if profile.salary_min is not None and profile.salary_min > 0:
+        shared["salary_min"] = profile.salary_min
+
+    shared["sort_by"] = "relevance"
+    shared["content-type"] = "application/json"
+
+    roles = list(profile.desired_roles) if profile.desired_roles else []
+    if profile.remote_preference == RemotePreference.REMOTE:
+        roles.append("remote")
+    elif profile.remote_preference == RemotePreference.HYBRID:
+        roles.append("hybrid")
+
+    if not roles:
+        return [{k: v for k, v in shared.items() if v is not None and v != ""}]
+
+    queries = []
+    for role in roles:
+        query = dict(shared)
+        query["what"] = role
+        queries.append({k: v for k, v in query.items() if v is not None and v != ""})
+    return queries
 
 
 def build_adzuna_query_simple(
@@ -85,18 +140,19 @@ def build_adzuna_query_simple(
         Dictionary of query parameters
     """
     params: Dict[str, Any] = {}
-    
-    if what:
-        params["what"] = what
+
+    what_or_terms: List[str] = [what] if what else []
+    if remote and remote != "any":
+        what_or_terms.append(remote)
+    if what_or_terms:
+        params["what_or"] = " ".join(what_or_terms)
+
     if where:
         params["where"] = where
     if salary_min is not None and salary_min > 0:
         params["salary_min"] = salary_min
-    if remote and remote != "any":
-        params["what"] = (params.get("what", "") + f", {remote}").lstrip(", ")
-    
+
     params["sort_by"] = "relevance"
-    params["sort_order"] = "desc"
-    params["content_type"] = "full"
-    
+    params["content-type"] = "application/json"
+
     return {k: v for k, v in params.items() if v is not None and v != ""}

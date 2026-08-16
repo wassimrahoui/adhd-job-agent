@@ -340,12 +340,15 @@ class TestSearchEndpoint:
                 
                 assert response.status_code == 200
                 data = response.json()
-                
-                # Single-call adapter makes only one call, so QuotaExhaustedError
-                # on hypothetical 2nd call never triggers; quota flags remain cleared.
+
+                # The profile has 2 desired_roles, so search issues one query
+                # per role (see build_adzuna_queries). The 1st role's query
+                # succeeds (2 jobs); the 2nd hits quota exhaustion - jobs
+                # already fetched from the 1st are kept and processed, and
+                # the quota flag/message are surfaced rather than discarded.
                 assert data["jobs_found"] == 2
-                assert data["quota_exhausted"] is False
-                assert data["quota_message"] is None
+                assert data["quota_exhausted"] is True
+                assert data["quota_message"] == "Adzuna daily quota exhausted for today"
         finally:
             from app.job_sources import set_test_adzuna_adapter
             from app.main import app
@@ -464,9 +467,15 @@ class TestAdzunaAdapter:
     
     @pytest.mark.asyncio
     async def test_adzuna_adapter_requires_credentials(self):
-        """Test adapter requires app_id and app_key."""
+        """Test adapter requires app_id and app_key.
+
+        Explicitly overrides both to None rather than passing an empty config,
+        since an empty config falls back to real ambient settings.adzuna_app_id/
+        app_key - this must not depend on whether the environment happens to
+        have Adzuna credentials configured.
+        """
         with pytest.raises(ValueError):
-            AdzunaSourceAdapter(config={})
+            AdzunaSourceAdapter(config={"app_id": None, "app_key": None})
     
     @pytest.mark.asyncio
     async def test_query_builder(self):
@@ -482,12 +491,18 @@ class TestAdzunaAdapter:
         )
         
         params = build_adzuna_query(profile)
-        
-        assert params["what"] == "Backend Engineer, Python Developer, remote"
-        assert params["where"] == "San Francisco, New York"
+
+        # what_or (not what) is Adzuna's real OR-across-terms parameter,
+        # space-separated (not comma-separated) - see build_adzuna_query.
+        assert params["what_or"] == "Backend Engineer Python Developer remote"
+        assert "what" not in params
+        # where is a single free-text location, not a multi-value list -
+        # only the primary (first) preference is used.
+        assert params["where"] == "San Francisco"
         assert params["salary_min"] == 100000
         assert params["sort_by"] == "relevance"
-        assert params["sort_order"] == "desc"
+        assert params["content-type"] == "application/json"
+        assert "sort_order" not in params  # not a real Adzuna parameter
     
     @pytest.mark.asyncio
     async def test_query_builder_empty_profile(self):
@@ -499,9 +514,67 @@ class TestAdzunaAdapter:
         params = build_adzuna_query(profile)
         
         assert params["sort_by"] == "relevance"
-        assert params["sort_order"] == "desc"
+        assert params["content-type"] == "application/json"
+        assert "sort_order" not in params  # not a real Adzuna parameter
         assert "what" not in params
         assert "where" not in params
+
+    @pytest.mark.asyncio
+    async def test_build_adzuna_queries_one_per_role(self):
+        """Regression: a single what_or query with multiple roles matches
+        per-word (e.g. "Security Engineer" OR "SOC Analyst" becomes "Security"
+        OR "Engineer" OR "SOC" OR "Analyst"), pulling in unrelated jobs like
+        "Security Guard". build_adzuna_queries issues one exact-phrase query
+        per role instead, to be merged/deduped by the caller."""
+        from app.job_sources import build_adzuna_queries
+        from app.models import ProfileCreate, RemotePreference
+
+        profile = ProfileCreate(
+            desired_roles=["Security Engineer", "SOC Analyst"],
+            location_preferences=["Munich", "Berlin"],
+            salary_min=60000,
+            remote_preference=RemotePreference.REMOTE,
+        )
+
+        queries = build_adzuna_queries(profile)
+
+        # 2 roles + 1 extra query for the remote-preference term
+        assert len(queries) == 3
+        whats = {q["what"] for q in queries}
+        assert whats == {"Security Engineer", "SOC Analyst", "remote"}
+        for q in queries:
+            assert "what_or" not in q
+            # With 2+ location preferences, Adzuna's single-valued "where"
+            # can't represent them all - left unscoped here (country=de is
+            # still applied at the URL level) and narrowed by the pre-filter
+            # instead, which does correctly match against every preference.
+            assert "where" not in q
+            assert q["salary_min"] == 60000
+            assert q["sort_by"] == "relevance"
+            assert q["content-type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_build_adzuna_queries_single_location_is_scoped(self):
+        from app.job_sources import build_adzuna_queries
+        from app.models import ProfileCreate
+
+        profile = ProfileCreate(desired_roles=["Security Engineer"], location_preferences=["Berlin"])
+        queries = build_adzuna_queries(profile)
+
+        assert len(queries) == 1
+        assert queries[0]["where"] == "Berlin"
+
+    @pytest.mark.asyncio
+    async def test_build_adzuna_queries_no_roles_returns_single_query(self):
+        from app.job_sources import build_adzuna_queries
+        from app.models import ProfileCreate
+
+        profile = ProfileCreate(location_preferences=["Berlin"])
+        queries = build_adzuna_queries(profile)
+
+        assert len(queries) == 1
+        assert "what" not in queries[0]
+        assert queries[0]["where"] == "Berlin"
 
 
 class TestNormalization:

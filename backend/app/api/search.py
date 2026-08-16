@@ -9,7 +9,7 @@ from app.db import get_database
 from app.repositories import ProfileRepository, JobRepository
 from app.job_sources import (
     AdzunaSourceAdapter,
-    build_adzuna_query,
+    build_adzuna_queries,
     normalize_job,
     is_duplicate,
     merge_job_data,
@@ -107,9 +107,12 @@ async def search_jobs(
             detail={"error_code": "PROFILE_NOT_FOUND", "message": "Profile not set. Please create a profile first."}
         )
     
-    # Step 2: Build query from profile
-    query_params = build_adzuna_query(profile)
-    
+    # Step 2: Build one precise query per desired role, instead of one broad
+    # query - see build_adzuna_queries for why (Adzuna's OR parameter matches
+    # per-word, not per-phrase, so a single combined query pulls in unrelated
+    # jobs like "Security Guard" for a "Security Engineer" role).
+    query_params_list = build_adzuna_queries(profile)
+
     # Step 3: Search Adzuna
     jobs_found = 0
     jobs_new = 0
@@ -139,9 +142,23 @@ async def search_jobs(
     prefilter_config = PreFilterConfig()
     
     try:
-        raw_jobs = await adzuna.search_jobs(query_params)
+        # Fetch each per-role query and merge, deduping by Adzuna job ID so a
+        # job matching multiple roles is only counted/processed once. If
+        # quota runs out partway through, keep whatever was already fetched
+        # from completed queries rather than discarding it.
+        raw_jobs_by_id: dict = {}
+        try:
+            for query_params in query_params_list:
+                query_jobs = await adzuna.search_jobs(query_params)
+                for job in query_jobs:
+                    raw_jobs_by_id.setdefault(job.id, job)
+        except QuotaExhaustedError as e:
+            quota_exhausted = True
+            quota_message = str(e)
+
+        raw_jobs = list(raw_jobs_by_id.values())
         jobs_found = len(raw_jobs)
-        
+
         # Process each job
         for raw_job in raw_jobs:
             # Normalize

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:5173"
 
+    # Logging
+    log_level: str = "INFO"
+
     @property
     def database_dir(self) -> Path:
         path = Path(self.database_path)
