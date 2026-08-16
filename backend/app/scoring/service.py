@@ -69,7 +69,7 @@ class ScoringService:
                 "scored_at": datetime.utcnow(),
                 "scoring_model": result.model_used,
             }
-            await self._job_repo.update_scoring(input_data.job.id, scoring_data)
+            await self._job_repo.update_scoring(input_data.job_id, scoring_data)
         
         return result
 

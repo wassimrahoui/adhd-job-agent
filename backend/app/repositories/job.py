@@ -143,6 +143,14 @@ class JobRepository:
         )
         return [self._row_to_job(row) for row in rows]
 
+    async def get_all_jobs(self, limit: int = 100) -> List[Job]:
+        """Get jobs regardless of prefilter status, as full Job records."""
+        rows = await self.db.fetchall(
+            "SELECT * FROM jobs ORDER BY discovered_at DESC LIMIT ?",
+            (limit,)
+        )
+        return [self._row_to_job(row) for row in rows]
+
     async def update_scoring(self, job_id: int, scoring_data: dict) -> Optional[Job]:
         """Update scoring fields for a job."""
         existing = await self.get_job(job_id)

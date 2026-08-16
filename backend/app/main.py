@@ -8,7 +8,15 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.db import init_db, close_db, get_database
-from app.api import health_router, profile_router, jobs_router, search_router, analysis_router, settings_router
+from app.api import (
+    health_router,
+    profile_router,
+    jobs_router,
+    search_router,
+    analysis_router,
+    settings_router,
+    processing_router,
+)
 
 
 @asynccontextmanager
@@ -84,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router)
     app.include_router(analysis_router)
     app.include_router(settings_router)
+    app.include_router(processing_router)
 
     return app
 

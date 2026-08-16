@@ -4,6 +4,7 @@ from .jobs import router as jobs_router
 from .search import router as search_router
 from .analysis import router as analysis_router
 from .settings import router as settings_router
+from .processing import router as processing_router
 
 __all__ = [
     "health_router",
@@ -12,4 +13,5 @@ __all__ = [
     "search_router",
     "analysis_router",
     "settings_router",
+    "processing_router",
 ]

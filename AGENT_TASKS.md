@@ -1028,7 +1028,7 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 
 * **Difficulty**: EASY
 * **Dependencies**: T6.2.3
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 4 — Integration
 
@@ -1055,17 +1055,17 @@ The implementation MUST remain evidence-based and MUST NOT invent qualifications
 ### T6.5.1: Recommendation unit tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.5.2: Edge-case tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T6.5.3: Full recommendation integration tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ---
 
@@ -1080,19 +1080,19 @@ It MUST NOT introduce browser automation, automatic applications, application tr
 ### T7.1.1: Define processing job state
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.1.2: Define processing request schema
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.1.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.1.3: Define processing response schema
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.1.2
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 2 — Component
 
@@ -1100,19 +1100,19 @@ It MUST NOT introduce browser automation, automatic applications, application tr
 
 * **Difficulty**: EASY
 * **Dependencies**: Phase 4
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.2.2: Create scoring service
 
 * **Difficulty**: EASY
 * **Dependencies**: Phase 5
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.2.3: Create recommendation service
 
 * **Difficulty**: EASY
 * **Dependencies**: Phase 6
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 3 — Logic
 
@@ -1120,19 +1120,19 @@ It MUST NOT introduce browser automation, automatic applications, application tr
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.2.1, T7.2.2, T7.2.3
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.3.2: Implement failure isolation
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.3.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.3.3: Implement processing status
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.3.1
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 4 — Integration
 
@@ -1140,42 +1140,42 @@ It MUST NOT introduce browser automation, automatic applications, application tr
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.3.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.4.2: Connect analysis to scoring
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.4.1
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.4.3: Connect scoring to recommendations
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.4.2
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.4.4: Create processing API endpoint
 
 * **Difficulty**: EASY
 * **Dependencies**: T7.4.3
-* **Status**: TODO
+* **Status**: DONE
 
 ## Layer 5 — Verification
 
 ### T7.5.1: Processing unit tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.5.2: Failure handling tests
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ### T7.5.3: Full processing pipeline test
 
 * **Difficulty**: EASY
-* **Status**: TODO
+* **Status**: DONE
 
 ---
 
